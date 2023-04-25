@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import dgl
 from dgl.nn.pytorch import GraphConv, SAGEConv
 import dgl.function as fn
+from tqdm import tqdm
 
 
 def normalized_laplacian_edata(g, weight=None):
@@ -18,7 +19,7 @@ def normalized_laplacian_edata(g, weight=None):
         g.apply_edges(lambda edges: {
                       'w': edges.data[weight] / torch.sqrt(edges.src['u'] * edges.dst['v'])})
         return g.edata['w']
-    
+
 
 class GCNModel(nn.Module):
     def __init__(self, in_feats, n_hidden, n_classes, n_layers):
@@ -57,3 +58,47 @@ class SAGEModel(nn.Module):
                 h = F.relu(h)
                 h = self.dropout(h)
         return h
+
+    # def inference(self, g, x, device):
+    #     """
+    #     Inference with the GraphSAGE model on full neighbors (i.e. without neighbor sampling).
+    #     g : the entire graph.
+    #     x : the input of entire node set.
+    #     The inference code is written in a fashion that it could handle any number of nodes and
+    #     layers.
+    #     """
+    #     # During inference with sampling, multi-layer blocks are very inefficient because
+    #     # lots of computations in the first few layers are repeated.
+    #     # Therefore, we compute the representation of all nodes layer by layer.  The nodes
+    #     # on each layer are of course splitted in batches.
+    #     # TODO: can we standardize this?
+    #     for l, layer in enumerate(self.layers):
+    #         y = torch.zeros(
+    #             g.num_nodes(),
+    #             self.n_hidden if l != len(self.layers) - 1 else self.n_classes,
+    #         ).to(device)
+
+    #         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
+    #         dataloader = dgl.dataloading.DataLoader(
+    #             g,
+    #             torch.arange(g.num_nodes()),
+    #             sampler,
+    #             batch_size=args.batch_size,
+    #             shuffle=True,
+    #             drop_last=False,
+    #             num_workers=args.num_workers,
+    #         )
+
+    #         for input_nodes, output_nodes, blocks in tqdm(dataloader):
+    #             block = blocks[0].int().to(device)
+
+    #             h = x[input_nodes]
+    #             h = layer(block, h)
+    #             if l != len(self.layers) - 1:
+    #                 h = F.relu(h)
+    #                 h = self.dropout(h)
+
+    #             y[output_nodes] = h
+
+    #         x = y
+    #     return y

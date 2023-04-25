@@ -14,20 +14,23 @@ from model import *
 
 
 def train_dgl(dataset, args):
+    device = args.device
     g, features, labels, n_classes, splitted_idx = dataset
     g = g.formats('csc')
     train_nid, val_nid, _ = splitted_idx['train'], splitted_idx['valid'], splitted_idx['test']
     features, labels = features.pin_memory(), labels.pin_memory()
 
-    g = g.to('cuda')
-    train_nid, val_nid = train_nid.to('cuda'), val_nid.to('cuda')
+    g = g.to('cpu') if args.use_uva else g.to(device)
+    train_nid, val_nid = train_nid.to(device), val_nid.to(device)
     num_layers = 3
-    model = SAGEModel(features.shape[1], 64, n_classes, num_layers).to('cuda')
-    sampler = NeighborSampler([5, 10, 15])
+    model = SAGEModel(features.shape[1], 256, n_classes, num_layers).to(device)
+    sampler = NeighborSampler([10, 10, 10])
     train_dataloader = DataLoader(g, train_nid, sampler, batch_size=args.batchsize,
-                                  shuffle=True,  drop_last=False, num_workers=args.num_workers)
+                                  shuffle=True,  drop_last=False, num_workers=args.num_workers,
+                                  device=torch.device(device), use_uva=args.use_uva)
     val_dataloader = DataLoader(g, val_nid, sampler, batch_size=args.batchsize,
-                                shuffle=True, drop_last=False, num_workers=args.num_workers)
+                                shuffle=True, drop_last=False, num_workers=args.num_workers,
+                                device=torch.device(device), use_uva=args.use_uva)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     static_memory = torch.cuda.memory_allocated() / (1024 * 1024 * 1024)
@@ -83,6 +86,9 @@ def train_dgl(dataset, args):
     torch.cuda.synchronize()
     total_time = time.time() - start
 
+    torch.save(model.state_dict(), 'models/graphsage_{}_{}.pt'.format(
+        args.dataset, time.ctime().replace(' ', '_')))
+
     print('Total Elapse Time:', total_time)
     print('Average Epoch Time:', np.mean(epoch_time[3:]))
     s1 = pd.Series(acc_list, name='acc')
@@ -98,7 +104,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'],
                         help="Training model on gpu or cpu")
-    parser.add_argument("--dataset", default='reddit', choices=['reddit', 'products', 'papers100m'],
+    parser.add_argument("--dataset", default='reddit',
                         help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=512,
                         help="batch size for training")
@@ -106,13 +112,13 @@ if __name__ == '__main__':
                         help="numbers of workers for sampling, must be 0 when gpu or uva is used")
     parser.add_argument("--num-epoch", type=int, default=50,
                         help="numbers of epoch in training")
+    parser.add_argument("--use-uva", type=bool, default=False,
+                        help="use uva for sampling or not")
     args = parser.parse_args()
     print(args)
     if args.dataset == 'reddit':
         dataset = load_reddit()
-    elif args.dataset == 'products':
-        dataset = load_ogb('ogbn-products')
-    elif args.dataset == 'papers100m':
-        dataset = load_ogb('ogbn-papers100M')
+    else:
+        dataset = load_ogb(args.dataset)
     print(dataset[0])
     train_dgl(dataset, args)
