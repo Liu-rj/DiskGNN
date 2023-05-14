@@ -1,4 +1,6 @@
-data/
-__pycache__/
-models/
-.vscode/
+.vscode
+data
+__pycache__
+models
+output
+temp

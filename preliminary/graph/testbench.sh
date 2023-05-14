@@ -37,6 +37,12 @@
 #     python ladies_offlinesample.py --num-epoch=50 --num-sample=3 --dataset=reddit
 # done
 
+
 # python graph_metadata.py --dataset=ogbn-products
-python graph_metadata.py --dataset=ogbn-papers100M
-python graph_metadata.py --dataset=friendster
+# python graph_metadata.py --dataset=ogbn-papers100M
+# python graph_metadata.py --dataset=friendster
+
+
+# python sampling_skewness.py --dataset=ogbn-products
+# python sampling_skewness.py --dataset=ogbn-papers100M --use-uva=True
+# python sampling_skewness.py --dataset=friendster --use-uva=True
