@@ -156,6 +156,6 @@ if __name__ == '__main__':
     if args.dataset == 'reddit':
         dataset = load_reddit()
     else:
-        dataset = load_ogb(args.dataset)
+        dataset = load_ogb(args.dataset, '/home/ubuntu/dataset')
     print(dataset[0])
     train_dgl(dataset, args)
