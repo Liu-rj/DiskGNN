@@ -10,6 +10,7 @@ from model import *
 
 def testbench(dataset, args):
     device = "cuda:0"
+    fanout = [int(x) for x in args.fanout.split(",")]
     g, features, labels, n_classes, splitted_idx = dataset
     g = g.formats("csc")
     train_nid, _, _ = (
@@ -17,11 +18,13 @@ def testbench(dataset, args):
         splitted_idx["valid"],
         splitted_idx["test"],
     )
-    features, labels = features.pin_memory(), labels.pin_memory()
 
     g = g.to("cpu") if args.use_uva else g.to(device)
     train_nid = train_nid.to(device)
-    sampler = NeighborSampler([10, 10, 10])
+    if args.dataset == "friendster":
+        idx = torch.randperm(train_nid.shape[0], device=device)
+        train_nid = train_nid[idx[: int(train_nid.shape[0] / 10)]]
+    sampler = NeighborSampler(fanout)
     train_dataloader = DataLoader(
         g,
         train_nid,
@@ -46,12 +49,12 @@ def testbench(dataset, args):
             sampled_counts[unique_res] += counts
     all_counts = torch.sum(sampled_counts)
 
-    a, _ = torch.sort(sampled_counts, dim=0, descending=True)
+    a, idx = torch.sort(sampled_counts, dim=0, descending=True)
     b = (torch.cumsum(a, dim=0) / all_counts).cpu().detach().numpy()
     font_size = 10
     plt.plot(np.arange(b.shape[0]) / g.num_nodes(), b)
     plt.xlabel(
-        "proportion of nodes descending order of counts",
+        "proportion of nodes in descending order of counts",
         fontsize=font_size,
         fontweight="bold",
     )
@@ -66,7 +69,37 @@ def testbench(dataset, args):
         fontweight="bold",
     )
     plt.grid(linestyle="-.")
-    plt.savefig(args.dataset + "-sampling-frequency.pdf", bbox_inches="tight")
+    plt.savefig(
+        args.dataset + f"-sampling-frequency-{args.fanout.replace(',','-')}.pdf",
+        bbox_inches="tight",
+    )
+    plt.clf()
+
+    g = g.formats("csr")
+    a = g.out_degrees().to(device)[idx]
+    b = (torch.cumsum(a, dim=0) / g.num_edges()).cpu().detach().numpy()
+    font_size = 10
+    plt.plot(np.arange(b.shape[0]) / g.num_nodes(), b)
+    plt.xlabel(
+        "proportion of nodes in descending order of counts",
+        fontsize=font_size,
+        fontweight="bold",
+    )
+    plt.ylabel(
+        "proportion of accumulated out-degrees",
+        fontsize=font_size,
+        fontweight="bold",
+    )
+    plt.title(
+        args.dataset + ": accumulated out-degress in sampling priority",
+        fontsize=font_size,
+        fontweight="bold",
+    )
+    plt.grid(linestyle="-.")
+    plt.savefig(
+        args.dataset + f"-sampling-outdegrees-{args.fanout.replace(',','-')}.pdf",
+        bbox_inches="tight",
+    )
     plt.clf()
 
 
@@ -83,6 +116,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num-epoch", type=int, default=10, help="numbers of epoch in training"
+    )
+    parser.add_argument(
+        "--fanout", type=str, default="10,10,10", help="sampling fanout"
     )
     args = parser.parse_args()
     print(args)
