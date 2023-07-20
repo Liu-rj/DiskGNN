@@ -2,5 +2,10 @@
 data
 __pycache__
 models
-output
 temp
+imgs
+logs
+
+build
+dist
+*.egg-info
