@@ -5,7 +5,8 @@
 
 namespace offgs {
 namespace cuda {
-torch::Tensor Difference(torch::Tensor t1, torch::Tensor t2);
+std::tuple<torch::Tensor, torch::Tensor> Difference(const torch::Tensor& t1,
+                                                    const torch::Tensor& t2);
 }
 }  // namespace offgs
 

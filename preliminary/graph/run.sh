@@ -91,16 +91,24 @@
 
 
 
-# python sampling_locality.py --dataset=ogbn-products --fanout=15,10,5
-# python sampling_locality.py --dataset=ogbn-papers100M --use-uva=True --fanout=15,10,5
-# python sampling_locality.py --dataset=friendster --use-uva=True --fanout=15,10,5
-# python sampling_locality.py --dataset=igb_tiny --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_tiny --dataset_size=tiny --in_memory=1
-# python sampling_locality.py --dataset=igb_large --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_large --dataset_size=large --in_memory=0
-# python sampling_locality.py --dataset=igb_full --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_full --dataset_size=full --in_memory=0
+# python sampling_locality.py --dataset=ogbn-products --fanout=5,10,15
+# python sampling_locality.py --dataset=ogbn-papers100M --use-uva=True --fanout=5,10,15
+# python sampling_locality.py --dataset=friendster --use-uva=True --fanout=5,10,15
+# python sampling_locality.py --dataset=igb_tiny --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_tiny --dataset_size=tiny --in_memory=1
+# python sampling_locality.py --dataset=igb_large --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_large --dataset_size=large --in_memory=0
+# python sampling_locality.py --dataset=igb_full --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_full --dataset_size=full --in_memory=0
 
-python speedup_measure.py --dataset=ogbn-products --use-uva=True --fanout=15,10,5
-python speedup_measure.py --dataset=ogbn-papers100M --use-uva=True --fanout=15,10,5
-python speedup_measure.py --dataset=friendster --use-uva=True --fanout=15,10,5
-python speedup_measure.py --dataset=igb_tiny --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_tiny --dataset_size=tiny --in_memory=1
-python speedup_measure.py --dataset=igb_large --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_large --dataset_size=large --in_memory=0
-python speedup_measure.py --dataset=igb_full --use-uva=True --fanout=15,10,5 --path=/efs/rjliu/dataset/igb_full --dataset_size=full --in_memory=0
+# python speedup_measure.py --dataset=ogbn-products --use-uva=True --fanout=5,10,15
+# python speedup_measure.py --dataset=ogbn-papers100M --use-uva=True --fanout=5,10,15
+# python speedup_measure.py --dataset=friendster --use-uva=True --fanout=5,10,15
+# python speedup_measure.py --dataset=igb_tiny --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_tiny --dataset_size=tiny --in_memory=1
+# python speedup_measure.py --dataset=igb_large --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_large --dataset_size=large --in_memory=0
+# python speedup_measure.py --dataset=igb_full --use-uva=True --fanout=5,10,15 --path=/efs/rjliu/dataset/igb_full --dataset_size=full --in_memory=0
+
+
+# python test.py --dataset=ogbn-products
+# python test.py --dataset=ogbn-papers100M
+# python test.py --dataset=igb_tiny --path=/efs/rjliu/dataset/igb_tiny --dataset_size=tiny --in_memory=1
+# python test.py --dataset=igb_small --path=/efs/rjliu/dataset/igb_dataset --dataset_size=small --in_memory=1
+python test.py --dataset=igb_medium --path=/efs/rjliu/dataset/igb_dataset --dataset_size=medium --in_memory=1
+python test.py --dataset=mag240m

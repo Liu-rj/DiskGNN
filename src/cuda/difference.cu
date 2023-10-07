@@ -94,7 +94,8 @@ struct IdxQueryHashmap {
   uint32_t capacity{0};
 };
 
-torch::Tensor Difference(torch::Tensor t1, torch::Tensor t2) {
+std::tuple<torch::Tensor, torch::Tensor> Difference(const torch::Tensor& t1,
+                                                    const torch::Tensor& t2) {
   int64_t t2_size = t2.numel();
   int64_t dir_size = UpPower(t2_size) * 2;
   torch::Tensor key_buffer = torch::full(dir_size, -1, t2.options());
@@ -127,7 +128,7 @@ torch::Tensor Difference(torch::Tensor t1, torch::Tensor t2) {
       });
 
   torch::Tensor select_index = torch::nonzero(out_mask).reshape(-1);
-  return t1.index({select_index});
+  return {t1.index({select_index}), select_index};
 }
 }  // namespace cuda
 }  // namespace offgs
