@@ -15,15 +15,16 @@ from dataset import OffgsDataset
 from queue import Queue
 import threading
 import psutil
+import csv
 
 import offgs
 
 
-def train(args, dataset, address_table, cached_feats, subg_dir, aux_dir):
+def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, aux_dir):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
 
-    labels = dataset.labels
+    labels = dataset.labels.pin_memory()
 
     if args.model == "SAGE":
         model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(device)
@@ -33,52 +34,55 @@ def train(args, dataset, address_table, cached_feats, subg_dir, aux_dir):
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    with open("/proc/sys/vm/drop_caches", "w") as stream:
-        stream.write("1\n")
-
     epoch_time_list, clear_cache_list = [], []
     for epoch in range(args.num_epoch):
-        clear_cache, transfer_time, train_time = 0, 0, 0
+        with open("/proc/sys/vm/drop_caches", "w") as stream:
+            stream.write("1\n")
+
+        clear_cache, train_time = 0, 0
         graph_load_time, feats_load_time, assemble_time = 0, 0, 0
         input_feat_size, input_node_num = 0, 0
         cold_feats_num = 0
+        graph_transfer_time, feat_transfer_time = 0, 0
 
         torch.cuda.synchronize()
         start = time.time()
 
         model.train()
         for i in trange(size):
-            torch.cuda.synchronize()
-            tic = time.time()
-            # Same effect of `sysctl -w vm.drop_caches=1`
-            # Requires sudo
-            with open("/proc/sys/vm/drop_caches", "w") as stream:
-                stream.write("1\n")
-            clear_cache += time.time() - tic
+            # tic = time.time()
+            # with open("/proc/sys/vm/drop_caches", "w") as stream:
+            #     stream.write("1\n")
+            # clear_cache += time.time() - tic
 
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
+            output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             graph_load_time += time.time() - tic
             tic = time.time()
             cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.ops.offgs._CAPI_LoadFeats_ODirect(
-                f"{aux_dir}/train-aux-{i}.npy", dataset.num_features, 8, 64
+                f"{aux_dir}/train-aux-{i}.npy", dataset.num_features, 8
             )
             feats_load_time += time.time() - tic
             cold_feats_num += cold_feats.shape[0]
 
             tic = time.time()
-            num_input = blocks[0].srcdata[dgl.NID].numel()
+            num_input = cold_nodes.numel() + hot_nodes.numel()
             x = torch.empty((num_input, dataset.num_features), dtype=torch.float32)
             x[rev_cold_idx] = cold_feats
-            x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
-            assemble_time = time.time() - tic
+            # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
+            torch.ops.offgs._CAPI_GatherInMem(x, rev_hot_idx, cached_feats, hot_nodes, address_table)
+            assemble_time += time.time() - tic
 
             tic = time.time()
-            x = x.to(device)
-            y = labels[blocks[-1].dstdata[dgl.NID]].to(device).long()
             blocks = [block.to(device) for block in blocks]
             torch.cuda.synchronize()
-            transfer_time += time.time() - tic
+            graph_transfer_time += time.time() - tic
+            tic = time.time()
+            x = x.to(device)
+            y = labels[output_nodes].to(device).long()
+            torch.cuda.synchronize()
+            feat_transfer_time += time.time() - tic
             input_node_num += x.shape[0]
             input_feat_size += x.shape[0] * x.shape[1]
 
@@ -97,7 +101,8 @@ def train(args, dataset, address_table, cached_feats, subg_dir, aux_dir):
             f"Graph Load Time: {graph_load_time:.3f}\t"
             f"Feature Load Time: {feats_load_time:.3f}\t"
             f"Assemble Time: {assemble_time:.3f}\t"
-            f"Transfer Time: {transfer_time:.3f}\t"
+            f"Graph Transfer Time: {graph_transfer_time:.3f}\t"
+            f"Feat Transfer Time: {feat_transfer_time:.3f}\t"
             f"Train Time: {train_time:.3f}\t"
             f"Epoch Time: {(epoch_time - clear_cache):.3f}\t"
             f"Drop Cache Time: {clear_cache:.3f}"
@@ -105,6 +110,20 @@ def train(args, dataset, address_table, cached_feats, subg_dir, aux_dir):
         print(f"Cold Feats Num: {cold_feats_num}\t" f"Feature Transfer size: {input_feat_size}\t" f"Input Node num: {input_node_num}")
         epoch_time_list.append(epoch_time)
         clear_cache_list.append(clear_cache)
+
+        with open("logs/train_decompose.csv", "a") as f:
+            writer = csv.writer(f, lineterminator="\n")
+            log_info = [
+                args.dataset,
+                round(graph_load_time, 3),
+                round(feats_load_time, 3),
+                round(assemble_time, 3),
+                round(graph_transfer_time, 3),
+                round(feat_transfer_time, 3),
+                round(train_time, 3),
+                round(epoch_time - clear_cache, 3),
+            ]
+            writer.writerow(log_info)
 
     torch.cuda.synchronize()
     avg_clear_cache = np.mean(clear_cache_list[1:])

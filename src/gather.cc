@@ -51,4 +51,25 @@ torch::Tensor GatherPRead(const std::string& feature_file,
 
   return ret;
 }
+
+void GatherInMem(torch::Tensor& out, const torch::Tensor& out_idx,
+                 const torch::Tensor& in, const torch::Tensor& in_idx,
+                 const torch::Tensor& map_table) {
+  assert(out_idx.numel() == in_idx.numel());
+  auto num_idx = in_idx.numel();
+  assert(out.sizes()[1] == in.sizes()[1]);
+  auto feature_dim = out.sizes()[1];
+
+  auto out_dataptr = out.data_ptr<float>();
+  auto in_dataptr = in.data_ptr<float>();
+  auto map_ptr = map_table.data_ptr<int>();
+  auto in_idx_ptr = in_idx.data_ptr<int>();
+  auto out_idx_ptr = out_idx.data_ptr<int>();
+
+#pragma omp parallel for num_threads(64)
+  for (int64_t i = 0; i < num_idx; i++) {
+    memcpy(out_dataptr + out_idx_ptr[i] * feature_dim,
+           in_dataptr + map_ptr[in_idx_ptr[i]] * feature_dim, feature_dim);
+  }
+}
 }  // namespace offgs

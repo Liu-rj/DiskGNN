@@ -14,7 +14,7 @@
 namespace offgs {
 std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
                                      int64_t feature_dim, int64_t num_align,
-                                     int64_t omp_theads) {
+                                     int64_t omp_threads) {
   std::ifstream is(file_path, std::ifstream::binary | std::ifstream::ate);
   if (!is.is_open()) {
     LOG(FATAL) << "failed to open file";
@@ -28,16 +28,16 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
   auto all_data = torch::empty(data_size / sizeof(float), options);
   auto data_ptr = all_data.data_ptr<float>();
 
-  auto read_unit = num_align * ALIGNMENT;
-  auto num_reads = static_cast<int>((data_size + read_unit - 1) / read_unit);
+  auto block_size = num_align * ALIGNMENT;
+  auto num_reads = static_cast<int>((data_size + block_size - 1) / block_size);
   // const auto processor_count = std::thread::hardware_concurrency();
 
   int fd = open(file_path.c_str(), O_RDONLY);
 
-#pragma omp parallel for num_threads(omp_theads)
+#pragma omp parallel for num_threads(omp_threads)
   for (int i = 0; i < num_reads; i++) {
-    if (pread(fd, data_ptr + (read_unit * i) / sizeof(float), read_unit,
-              read_unit * i) == -1) {
+    if (pread(fd, data_ptr + (block_size * i) / sizeof(float), block_size,
+              block_size * i) == -1) {
       LOG(FATAL) << "ERROR: " << strerror(errno);
     }
   }
@@ -62,8 +62,7 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
 
 std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
                                              int64_t feature_dim,
-                                             int64_t num_align,
-                                             int64_t omp_theads) {
+                                             int64_t num_align) {
   std::ifstream is(file_path, std::ifstream::binary | std::ifstream::ate);
   if (!is.is_open()) {
     LOG(FATAL) << "failed to open file";
@@ -72,20 +71,24 @@ std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
   std::size_t data_size = is.tellg();
   is.close();
 
-  auto read_unit = num_align * ALIGNMENT;
-  auto reminder = data_size % read_unit;
+  auto block_size = num_align * ALIGNMENT;
+  auto reminder = data_size % ALIGNMENT;
   auto aligned_size =
-      reminder == 0 ? data_size : data_size - reminder + read_unit;
+      reminder == 0 ? data_size : data_size - reminder + ALIGNMENT;
   float* read_buffer = (float*)aligned_alloc(ALIGNMENT, aligned_size);
-  auto num_reads = static_cast<int>(aligned_size / read_unit);
+  auto num_blocks =
+      static_cast<int>((aligned_size + block_size - 1) / block_size);
   // const auto processor_count = std::thread::hardware_concurrency();
+  auto omp_threads = std::min(num_blocks, 64);
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
 
-#pragma omp parallel for num_threads(omp_theads)
-  for (int i = 0; i < num_reads; i++) {
-    if (pread(fd, read_buffer + (read_unit * i) / sizeof(float), read_unit,
-              read_unit * i) == -1) {
+#pragma omp parallel for num_threads(omp_threads)
+  for (int i = 0; i < num_blocks; i++) {
+    auto read_size =
+        i == (num_blocks - 1) ? aligned_size - block_size * i : block_size;
+    if (pread(fd, read_buffer + (block_size * i) / sizeof(float), read_size,
+              block_size * i) == -1) {
       LOG(FATAL) << "ERROR: " << strerror(errno);
     }
   }

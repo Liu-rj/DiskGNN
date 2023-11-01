@@ -56,7 +56,7 @@ def run(dataset, args):
         clear_cache_time += time.time() - tic
 
         tic = time.time()
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/train-nid-{i}.pt").to("cuda")
+        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to("cuda")
         nid_load_time += time.time() - tic
 
         tic = time.time()

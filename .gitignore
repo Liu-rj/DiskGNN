@@ -9,3 +9,5 @@ logs
 build
 dist
 *.egg-info
+
+*.out
