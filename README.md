@@ -1,5 +1,19 @@
 # OfflineSampling for Out-of-core GNN Training
 
+## Installation
+
+* From the root directory of this project
+
+```
+mkdir build; cd build; cmake ..; make -j8
+```
+
+* From the root directory of this project
+
+```
+cd python; python setup.py install
+```
+
 ## Usage
 
 * Prepare dataset
