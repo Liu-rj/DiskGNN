@@ -19,6 +19,8 @@ def run(dataset, args):
     output_dir = f"{args.store_path}/{args.dataset}-{args.fanout}"
     aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
 
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
 
@@ -72,7 +74,7 @@ def run(dataset, args):
         difference_time += time.time() - tic
 
         tic = time.time()
-        packed_feats: torch.Tensor = features[cold_nodes.cpu()]
+        packed_feats: torch.Tensor = features[cold_nodes.long().cpu()]
         # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
         # packed_feats = torch.ops.offgs._CAPI_GatherPRead(dataset.features_path, cold_nodes.cpu(), dataset.num_features)
         feat_load_time += time.time() - tic
@@ -115,7 +117,7 @@ if __name__ == "__main__":
     parser.add_argument("--batchsize", type=int, default=1000, help="batch size for training")
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
-    parser.add_argument("--feat-cache-size", type=int, default=1000000000, help="cache size in bytes")
+    parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")
     args = parser.parse_args()
     print(args)
 

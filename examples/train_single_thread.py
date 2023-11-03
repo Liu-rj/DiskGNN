@@ -69,7 +69,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             tic = time.time()
             num_input = cold_nodes.numel() + hot_nodes.numel()
             x = torch.empty((num_input, dataset.num_features), dtype=torch.float32)
-            x[rev_cold_idx] = cold_feats
+            x[rev_cold_idx.long()] = cold_feats
             # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
             torch.ops.offgs._CAPI_GatherInMem(x, rev_hot_idx, cached_feats, hot_nodes, address_table)
             assemble_time += time.time() - tic
@@ -80,7 +80,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             graph_transfer_time += time.time() - tic
             tic = time.time()
             x = x.to(device)
-            y = labels[output_nodes].to(device).long()
+            y = labels[output_nodes.long()].to(device).long()
             torch.cuda.synchronize()
             feat_transfer_time += time.time() - tic
             input_node_num += x.shape[0]
