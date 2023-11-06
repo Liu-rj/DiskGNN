@@ -54,6 +54,8 @@ def run(args, dataset, label_offset):
         node_counts[input_nodes.cuda()] += 1
     sampling_time = time.time() - start
     sorted_idx = torch.argsort(node_counts, descending=True).cpu()
+    ## save nodecounts
+    torch.save(node_counts, f"{output_dir}/node_counts.pt")
     torch.save(sorted_idx, f"{output_dir}/meta_node_popularity.pt")
     print(
         f"Drop Cache Time: {clear_cache_time:.3f}\t"

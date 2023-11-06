@@ -138,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument("--dir", type=str, default="/nvme2n1", help="path to store subgraph")
-    parser.add_argument("--feat-cache-size", type=int, default=1000000000, help="cache size in bytes")
+    parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")
     parser.add_argument("--num-epoch", type=int, default=3, help="numbers of epoch in training")
     args = parser.parse_args()
     print(args)
