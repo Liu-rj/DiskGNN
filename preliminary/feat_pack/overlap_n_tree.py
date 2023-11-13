@@ -6,11 +6,12 @@ from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, '/home/ubuntu/OfflineSampling/examples')
+import sklearn.cluster as cluster
 
 from load_graph import *
 from model import *
-from sklearn.cluster import AgglomerativeClustering
-
+from sklearn.cluster import AgglomerativeClustering,SpectralClustering
+import sklearn
 import psutil
 import time
 import json
@@ -87,11 +88,14 @@ class Jaccard_TreeBuilder:
         return similarity_matrix
 
     @staticmethod
-    def cluster_sequences(sequences, k):
+    def cluster_sequences(sequences, k, clustermethod='spectral'):
         similarity_matrix = Jaccard_TreeBuilder.calculate_similarity_matrix(sequences)
         # Convert similarity to distance
         distance_matrix = 1 - similarity_matrix
-        clustering = AgglomerativeClustering(n_clusters=k, affinity='precomputed', linkage='complete')
+        if clustermethod=='spectral':
+            clustering = SpectralClustering(n_clusters=k, affinity='precomputed')
+        else:
+            clustering = AgglomerativeClustering(n_clusters=k, affinity='precomputed', linkage='complete')
         labels = clustering.fit_predict(distance_matrix.cpu())
 
         clusters = [[] for _ in range(k)]
