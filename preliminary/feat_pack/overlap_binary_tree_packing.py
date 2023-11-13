@@ -4,8 +4,12 @@ import argparse
 import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
+import sys
+sys.path.insert(0, '/home/ubuntu/OfflineSampling/examples')
+
 from load_graph import *
 from model import *
+
 import psutil
 import time
 import json
@@ -13,73 +17,56 @@ from dataset import OffgsDataset
 import csv
 
 import offgs
-def find_unique_overlaps(sequences):
-    ## convert to list
-    sequences = [seq.tolist() for seq in sequences]
-    ## print every sequence len
-    for i in range(len(sequences)):
-        print(f"Sequence {i} len: {len(sequences[i])}")
-    # Convert all index strings to sets to remove duplicates and for set operations
-    sets = [set(seq) for seq in sequences]
-    num_seqs = len(sets)
-    unique_overlaps = []
-    remaining_parts = []
-    overlap_matrix_len = [[None for _ in range(num_seqs)] for _ in range(num_seqs)]
-    overlap_matrix_index = [[None for _ in range(num_seqs)] for _ in range(num_seqs)]
+class TreeNode:
+    def __init__(self, value, left=None, right=None):
+        self.value = value  # The set of IDs at this node
+        self.left = left
+        self.right = right
+        # When a TreeNode is created, update the total length
+        TreeBuilder.total_length += len(value)
 
-    # Calculate overlaps for all possible pair combinations
-    for i in range(len(sets)):
-        remaining = sets[i].copy()  # Copy the current set to track remaining parts
-        for j in range(i+1, len(sets)):
-            # Find the intersection of two sets
-            overlap = sets[i] & sets[j]
-            
-            # Eliminate elements that have already overlapped
-            unique_overlap = set()
-            for item in overlap:
-                if all(item not in s for k, s in enumerate(sets) if k not in [i, j]):
-                    unique_overlap.add(item)
+class TreeBuilder:
+    total_length = 0
 
-            # Record the size of elements that only overlap once in an upper triangular matrix
-            overlap_size = len(unique_overlap)
-            overlap_matrix_len[i][j] = overlap_size 
-            overlap_matrix_index[i][j] = unique_overlap
+    @staticmethod
+    def build_tree(sequences, ancestor_values=set()):
+        if len(sequences) == 1:
+            unique_values = set(sequences[0]) - ancestor_values
+            return TreeNode(list(unique_values))
 
-            # Add elements that only overlap once to the result list
-            unique_overlaps.append(((i, j), unique_overlap))
+        mid = len(sequences) // 2
+        left_seqs = sequences[:mid]
+        right_seqs = sequences[mid:]
+        print(mid)
 
-            # Remove this overlap from both the current set and the corresponding set
-            sets[i] -= unique_overlap
-            sets[j] -= unique_overlap
-            remaining -= unique_overlap
+        current_values = set.intersection(*map(set, sequences))
+        current_values -= ancestor_values
 
-        # Add the remaining parts
-        remaining_parts.append((i, remaining))
-    
-    # Set diagonal entries to the size of the remaining parts of each sequence
-    for i in range(len(sets)):
-        overlap_matrix_len[i][i] = len(remaining_parts[i][1])
-        overlap_matrix_index[i][i] = remaining_parts[i][1]
+        new_ancestor_values = ancestor_values | current_values
 
-    # Return unique overlaps, remaining parts of each sequence, and the upper triangular matrices
-    return unique_overlaps, remaining_parts, overlap_matrix_len, overlap_matrix_index
-def compute_cumulative_upper_triangular(matrix):
-    matrix_np = np.array(matrix, dtype=np.object)
-    matrix_np[matrix_np == None] = 0
-    matrix_np = matrix_np.astype(int)
+        left_child = TreeBuilder.build_tree(left_seqs, new_ancestor_values)
+        right_child = TreeBuilder.build_tree(right_seqs, new_ancestor_values)
 
-    cumulative_matrix = np.zeros_like(matrix_np)
-    for i in range(matrix_np.shape[0]):
-        for j in range( matrix_np.shape[1]):
-            cumulative_matrix[i][j] = matrix_np[i][j]
-            if j > 0:
-                cumulative_matrix[i][j] += cumulative_matrix[i][j-1]
-            if i>0 and j== 0:
-                cumulative_matrix[i][j] += cumulative_matrix[i-1][-1]
-           
+        return TreeNode(list(current_values), left_child, right_child)
 
-    return cumulative_matrix
 
+
+## add print tree function
+def print_tree(node, depth=0):
+    # Helper function to print the tree structure
+    print(' ' * depth * 2, node.value)
+    if node.left:
+        print_tree(node.left, depth + 1)
+    if node.right:
+        print_tree(node.right, depth + 1)
+
+def intersection(t1,t2):
+        combined = torch.cat((t1, t2))
+        uniques, counts = combined.unique(return_counts=True)
+        difference = uniques[counts == 1]
+        intersection = uniques[counts > 1]
+        del combined, uniques, counts
+        return -intersection
 def run(dataset, args):
     output_dir = f"{args.store_path}/{args.dataset}-{args.fanout}"
     aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
@@ -92,7 +79,7 @@ def run(dataset, args):
     features = dataset.mmap_features
 
     sorted_idx = torch.load(f"{output_dir}/meta_node_popularity.pt").cpu()
-
+    node_cnt = torch.load(f"{output_dir}/node_counts.pt").cpu()
     feat_load_time, nid_load_time, difference_time, save_time = 0, 0, 0, 0
     clear_cache_time = 0
 
@@ -115,6 +102,9 @@ def run(dataset, args):
     torch.save(address_table, f"{aux_dir}/address_table.pt")
     cache_init_time = time.time() - tic
 
+    last_node_id=sorted_idx[num_entries]
+    node_cnt = node_cnt[last_node_id]
+    print(f"last_node_id: {last_node_id}, node_cnt: {node_cnt}")
     cache_indices = cache_indices.to("cuda")
     
     
@@ -146,46 +136,17 @@ def run(dataset, args):
         torch.cuda.synchronize()
         difference_time += time.time() - tic
         cold_index_strs.append(cold_nodes)
-    overlaps, remainings, overlap_matrix,overlap_matrix_index = find_unique_overlaps(cold_index_strs)
-    for idx_pair, unique_overlap in overlaps:
-        print(f"Unique overlap between sequence {idx_pair[0]} and {idx_pair[1]}: {sorted(list(unique_overlap))}")
+    sequences = [seq.tolist() for seq in cold_index_strs]
+    # Build the tree
+    root = TreeBuilder.build_tree(sequences)
 
-    for idx, remaining in remainings:
-        print(f"Remaining elements of sequence {idx}: {sorted(list(remaining))}")
-
-    print("Overlap matrix (upper triangular):")
-    for row in overlap_matrix:
-        print(row)
-    cumulative_matrix = compute_cumulative_upper_triangular(overlap_matrix)-1
-    print("Cumulative matrix (upper triangular):")
-    for row in cumulative_matrix:
-        print(list(row))
-    # Function to extract features based on the overlap index matrix
-    def extract_features(overlap_matrix_index, feature):
-        # Create a list to hold the selected features
-        selected_features = []
-
-        # Convert the PyTorch tensor to a NumPy array
-        feature_np = feature.numpy()
-
-        # Traverse the index matrix of the upper triangular matrix
-        for i in range(len(overlap_matrix_index)):
-            for j in range(i, len(overlap_matrix_index[i])):
-                if overlap_matrix_index[i][j] is not None:
-                    # Iterate through each index in the set
-                    for index in overlap_matrix_index[i][j]:
-                        # Check if the index is within a valid range
-                        if index < len(feature_np):
-                            # Retrieve the feature
-                            selected_features.append(feature_np[index])
-
-        # Convert the list to a numpy array
-        return np.vstack(selected_features)
-
-    # Example usage
-    extracted_features = extract_features(overlap_matrix_index, feature)
-    print(extracted_features)
-    print(extracted_features.shape)
+    # Access the total length
+    print("Total length of all current_values:", TreeBuilder.total_length)
+    
+    pre_total_len=0
+    for seq in sequences:
+        pre_total_len+=len(seq)
+    print('pre total length: '+str(pre_total_len))
         # tic = time.time()
         # packed_feats: torch.Tensor = features[cold_nodes.long().cpu()]
         # # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
