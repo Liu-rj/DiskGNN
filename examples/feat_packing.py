@@ -17,10 +17,12 @@ import offgs
 
 def run(dataset, args):
     output_dir = f"{args.store_path}/{args.dataset}-{args.fanout}"
+
+    if args.batchsize!=1000:
+        ## for megabatch sampling not default batchsize`1000`
+        output_dir = f"{args.store_path}/{args.dataset}-{args.batchsize}--{args.fanout}"
     aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
 
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
 
@@ -82,7 +84,12 @@ def run(dataset, args):
         tic = time.time()
         aux_data = torch.cat([packed_feats.flatten(), cold_nodes.cpu(), hot_nodes.cpu(), rev_hot_idx.cpu(), rev_cold_idx.cpu()])
         stored_data = np.memmap(f"{aux_dir}/train-aux-{i}.npy", mode='w+', shape=aux_data.numel() + 5, dtype=np.float32)
-        stored_data[:5] = [packed_feats.numel(), cold_nodes.numel(), hot_nodes.numel(), rev_hot_idx.numel(), rev_cold_idx.numel()]
+        stored_data[:5] = [np.float32(packed_feats.numel()), np.float32(cold_nodes.numel()), np.float32(hot_nodes.numel()), np.float32(rev_hot_idx.numel()), np.float32(rev_cold_idx.numel())]
+        ## has a small problem here print("{:.1f}".format(stored_data[0])) [TODO] use float64 instead and design it in another file
+        # 90733504.0
+        # packed_feats.numel()
+        # 90733500
+        # stored_data[:5] = [packed_feats.numel(), cold_nodes.numel(), hot_nodes.numel(), rev_hot_idx.numel(), rev_cold_idx.numel()]
         stored_data[5:] = aux_data
         stored_data.flush()
         save_time += time.time() - tic
@@ -114,7 +121,7 @@ def run(dataset, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=1000, help="batch size for training")
+    parser.add_argument("--batchsize", type=int, default=2000, help="batch size for training")
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")

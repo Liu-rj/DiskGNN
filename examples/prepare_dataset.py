@@ -54,7 +54,7 @@ def run(args, dataset, label_offset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="friendster", help="which dataset to load for training")
+    parser.add_argument("--dataset", type=str, default="ogbn-papers100M", help="which dataset to load for training")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     parser.add_argument("--path", type=str, default="/efs/rjliu/dataset/igb_full")
     parser.add_argument("--dataset_size", type=str, default="full", choices=["tiny", "small", "medium", "large", "full"])
