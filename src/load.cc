@@ -60,9 +60,9 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
   return res;
 }
 
-std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
-                                             int64_t feature_dim,
-                                             int64_t num_align) {
+std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
+                                                int64_t feature_dim,
+                                                int64_t num_align) {
   std::ifstream is(file_path, std::ifstream::binary | std::ifstream::ate);
   if (!is.is_open()) {
     LOG(FATAL) << "failed to open file";
@@ -99,7 +99,7 @@ std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
       torch::from_blob(read_buffer, data_size / sizeof(float), options);
-  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt32).cumsum(0);
+  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64).cumsum(0);
   auto sizes_ptr = sizes.data_ptr<int64_t>();
 
   std::vector<torch::Tensor> res;
@@ -109,7 +109,52 @@ std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
   for (int i = 0; i < 4; i++) {
     res.push_back(all_data.slice(0, sizes_ptr[i] + 5, sizes_ptr[i + 1] + 5)
                       .clone()
-                      .to(torch::kInt32));
+                      .to(torch::kInt64));
+  }
+
+  free(read_buffer);
+
+  return res;
+}
+
+std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
+                                            int64_t feature_dim) {
+  std::ifstream is(file_path, std::ifstream::binary | std::ifstream::ate);
+  if (!is.is_open()) {
+    LOG(FATAL) << "failed to open file";
+    return {};
+  }
+  std::size_t file_size = is.tellg();
+  is.close();
+
+  size_t reminder = file_size % ALIGNMENT;
+  size_t aligned_size =
+      reminder == 0 ? file_size : file_size - reminder + ALIGNMENT;
+  float* read_buffer = (float*)aligned_alloc(ALIGNMENT, aligned_size);
+
+  int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
+
+  if (pread(fd, read_buffer, aligned_size, 0) == -1) {
+    printf("error\n");
+  }
+
+  close(fd);
+
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto all_data =
+      torch::from_blob(read_buffer, file_size / sizeof(float), options);
+  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64).cumsum(0);
+  auto sizes_ptr = sizes.data_ptr<int64_t>();
+
+  std::vector<torch::Tensor> res;
+  res.push_back(all_data.slice(0, 5, sizes_ptr[0] + 5)
+                    .clone()
+                    .view({sizes_ptr[0] / feature_dim, feature_dim}));
+  for (int i = 0; i < 4; i++) {
+    res.push_back(all_data.slice(0, sizes_ptr[i] + 5, sizes_ptr[i + 1] + 5)
+                      .clone()
+                      .to(torch::kInt64));
   }
 
   free(read_buffer);

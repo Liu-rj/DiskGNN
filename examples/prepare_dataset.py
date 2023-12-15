@@ -55,7 +55,7 @@ def run(args, dataset, label_offset):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
+    parser.add_argument("--store-path", default="/nvme1n1", help="path to store subgraph")
     parser.add_argument("--path", type=str, default="/efs/rjliu/dataset/igb_full")
     parser.add_argument("--dataset_size", type=str, default="full", choices=["tiny", "small", "medium", "large", "full"])
     parser.add_argument("--num_classes", type=int, default=19)
@@ -70,15 +70,15 @@ if __name__ == "__main__":
 
     label_offset = 0
     if args.dataset.startswith("ogbn"):
-        dataset = load_ogb(args.dataset, "/nvme1n1/dataset")
+        dataset = load_ogb(args.dataset, "/efs/rjliu/dataset")
     elif args.dataset.startswith("igb"):
         dataset = load_igb(args)
     elif args.dataset == "mag240m":
-        dataset = load_mag240m("/home/ubuntu/mag", only_graph=False)
+        dataset = load_mag240m("/efs/rjliu/dataset/mag240m", only_graph=False)
         label_offset = dataset[-1]
         dataset = dataset[:-1]
     elif args.dataset == "friendster":
-        dataset = load_dglgraph("/nvme1n1/dataset/friendster/friendster.bin", 128, 20)
+        dataset = load_dglgraph("/efs/rjliu/dataset/friendster/friendster.bin", 128, 20)
     else:
         raise NotImplementedError
 

@@ -20,7 +20,7 @@ __device__ inline uint32_t Hash32Shift(uint32_t key) {
 }
 
 __device__ inline uint64_t Hash64Shift(uint64_t key) {
-  key = (~key) + (key << 21);             // key = (key << 21) - key - 1;
+  key = (~key) + (key << 21);  // key = (key << 21) - key - 1;
   key = key ^ (key >> 24);
   key = (key + (key << 3)) + (key << 8);  // key * 265
   key = key ^ (key >> 14);
@@ -94,8 +94,7 @@ struct IdxQueryHashmap {
   uint32_t capacity{0};
 };
 
-std::tuple<torch::Tensor, torch::Tensor> Difference(const torch::Tensor& t1,
-                                                    const torch::Tensor& t2) {
+std::tuple<torch::Tensor, torch::Tensor> BuildHashMap(const torch::Tensor& t2) {
   int64_t t2_size = t2.numel();
   int64_t dir_size = UpPower(t2_size) * 2;
   torch::Tensor key_buffer = torch::full(dir_size, -1, t2.options());
@@ -112,8 +111,16 @@ std::tuple<torch::Tensor, torch::Tensor> Difference(const torch::Tensor& t1,
                      hashmap.Insert(key[i], 1);
                    });
 
+  return {key_buffer, value_buffer};
+}
+
+std::vector<torch::Tensor> QueryHashMap(const torch::Tensor& t1,
+                                        const torch::Tensor& key_buffer,
+                                        const torch::Tensor& value_buffer) {
+  int64_t dir_size = key_buffer.numel();
   torch::Tensor out_mask = torch::zeros_like(t1);
 
+  using it = thrust::counting_iterator<int64_t>;
   thrust::for_each(
       thrust::device, it(0), it(t1.numel()),
       [key = t1.data_ptr<int64_t>(), out = out_mask.data_ptr<int64_t>(),
@@ -127,8 +134,43 @@ std::tuple<torch::Tensor, torch::Tensor> Difference(const torch::Tensor& t1,
         }
       });
 
-  torch::Tensor select_index = torch::nonzero(out_mask).reshape(-1);
-  return {t1.index({select_index}), select_index};
+  torch::Tensor diff_index = torch::nonzero(out_mask).reshape(-1);
+  torch::Tensor intersect_index = torch::nonzero((out_mask == 0)).reshape(-1);
+  return {t1.index({diff_index}), diff_index, t1.index({intersect_index}),
+          intersect_index};
+}
+
+std::vector<torch::Tensor> Difference(const torch::Tensor& t1,
+                                      const torch::Tensor& t2,
+                                      bool return_intersect) {
+  torch::Tensor key_buffer, value_buffer;
+  std::tie(key_buffer, value_buffer) = BuildHashMap(t2);
+
+  int64_t dir_size = key_buffer.numel();
+  torch::Tensor out_mask = torch::zeros_like(t1);
+
+  using it = thrust::counting_iterator<int64_t>;
+  thrust::for_each(
+      thrust::device, it(0), it(t1.numel()),
+      [key = t1.data_ptr<int64_t>(), out = out_mask.data_ptr<int64_t>(),
+       _key_buffer = key_buffer.data_ptr<int64_t>(),
+       _value_buffer = value_buffer.data_ptr<int64_t>(),
+       dir_size] __device__(int64_t i) {
+        IdxQueryHashmap<int64_t> hashmap(_key_buffer, _value_buffer, dir_size);
+        int64_t value = hashmap.Query(key[i]);
+        if (value == -1) {
+          out[i] = 1;
+        }
+      });
+
+  torch::Tensor diff_index = torch::nonzero(out_mask).reshape(-1);
+  if (return_intersect) {
+    torch::Tensor intersect_index = torch::nonzero((out_mask == 0)).reshape(-1);
+    return {t1.index({diff_index}), diff_index, t1.index({intersect_index}),
+            intersect_index};
+  } else {
+    return {t1.index({diff_index}), diff_index};
+  }
 }
 }  // namespace cuda
 }  // namespace offgs
