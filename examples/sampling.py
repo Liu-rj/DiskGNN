@@ -105,7 +105,7 @@ if __name__ == "__main__":
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
     )
     parser.add_argument(
-        "--store-path", default="/nvme1n1", help="path to store subgraph"
+        "--store-path", default="/nvme1n1/offgs_dataset", help="path to store subgraph"
     )
     args = parser.parse_args()
     print(args)

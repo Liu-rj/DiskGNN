@@ -179,12 +179,12 @@ import os
 # temp = torch.rand(1000000000, dtype=torch.float32)
 # torch.save(temp, "/nvme1n1/torch_testfile.pt")
 
-with open("/proc/sys/vm/drop_caches", "w") as stream:
-    stream.write("3\n")
+# with open("/proc/sys/vm/drop_caches", "w") as stream:
+#     stream.write("3\n")
 
-tic = time.time()
-temp = torch.load("/nvme1n1/torch_testfile.pt")
-print(time.time() - tic)
+# tic = time.time()
+# temp = torch.load("/nvme1n1/torch_testfile.pt")
+# print(time.time() - tic)
 
 
 # tic = time.time()
@@ -192,3 +192,17 @@ print(time.time() - tic)
 #     blocks = torch.load(f"/nvme1n1/friendster-1024-10,10,10/train-{i}.pt")
 #     output_nodes = torch.load(f"/nvme1n1/friendster-1024-10,10,10/out-nid-{i}.pt")
 # print(time.time() - tic)
+
+
+temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
+temp = temp.to("cuda")
+
+duration = 0
+for i in range(3):
+    temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
+    torch.cuda.synchronize()
+    tic = time.time()
+    temp = temp.to("cuda")
+    torch.cuda.synchronize()
+    duration += time.time() - tic
+print(duration / 3)

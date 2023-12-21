@@ -20,14 +20,16 @@ import csv
 import offgs
 
 
-def load_graph(queue, path, size):
+def load_graph(queue, path, size, labels: torch.Tensor, device):
     for i in range(size):
         blocks = torch.load(f"{path}/train-{i}.pt")
         output_nodes = torch.load(f"{path}/out-nid-{i}.pt")
-        queue.put((blocks, output_nodes))
+        blocks = [block.to(device, non_blocking=True) for block in blocks]
+        y = labels[output_nodes].to(device, non_blocking=True)
+        queue.put((blocks, y))
 
 
-def load_feats(queue, aux_path, size, cached_feats, address_table):
+def load_feats(queue, aux_path, size, cached_feats, address_table, device):
     for i in range(size):
         (
             cold_feats,
@@ -50,7 +52,7 @@ def load_feats(queue, aux_path, size, cached_feats, address_table):
         torch.ops.offgs._CAPI_GatherInMem(
             x, rev_hot_idx, cached_feats, hot_nodes, address_table
         )
-        queue.put(x)
+        queue.put((x.to(device, non_blocking=True), cold_nodes.numel()))
 
 
 def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, aux_dir):
@@ -68,6 +70,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
+    default_stream = torch.cuda.default_stream()
 
     epoch_info_recorder = [[] for i in range(6)]
     for epoch in range(args.num_epoch):
@@ -81,14 +84,15 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
         graph_queue = Queue(maxsize=5)
         graph_loader = threading.Thread(
-            target=load_graph, args=(graph_queue, subg_dir, size)
+            target=load_graph,
+            args=(graph_queue, subg_dir, size, labels, device),
         )
         graph_loader.start()
 
         feats_queue = Queue(maxsize=5)
         feats_loader = threading.Thread(
             target=load_feats,
-            args=(feats_queue, aux_dir, size, cached_feats, address_table),
+            args=(feats_queue, aux_dir, size, cached_feats, address_table, device),
         )
         feats_loader.start()
 
@@ -99,57 +103,63 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             #     stream.write("1\n")
             # clear_cache += time.time() - tic
 
-            tic = time.time()
-            blocks, output_nodes = graph_queue.get()
-            info_recorder[0] += time.time() - tic  # graph load
-            tic = time.time()
-            x = feats_queue.get()
-            info_recorder[1] += time.time() - tic  # feature load
+            # tic = time.time()
+            blocks, y = graph_queue.get()
+            # info_recorder[0] += time.time() - tic  # graph load
+            # tic = time.time()
+            x, cold_feat_num = feats_queue.get()
+            # info_recorder[1] += time.time() - tic  # feature load
+            info_recorder[3] += cold_feat_num  # cold feature num
+            info_recorder[4] += x.shape[0]  # feature transfer num
 
-            tic = time.time()
-            blocks = [block.to(device) for block in blocks]
-            x = x.to(device)
-            y = labels[output_nodes].to(device).long()
-            torch.cuda.synchronize()
-            info_recorder[2] += time.time() - tic  # transfer
-            info_recorder[4] += x.shape[0]  # feature num
+            # tic = time.time()
+            # blocks = [block.to(device) for block in blocks]
+            # x = x.to(device)
+            # y = labels[output_nodes].to(device).long()
+            # torch.cuda.synchronize()
+            # info_recorder[2] += time.time() - tic  # transfer
+            # info_recorder[4] += x.shape[0]  # feature num
 
-            tic = time.time()
+            # tic = time.time()
             pred = model(blocks, x)
-            loss = F.cross_entropy(pred, y)
+            loss = F.cross_entropy(pred, y.long())
             opt.zero_grad()
             loss.backward()
             opt.step()
-            torch.cuda.synchronize()
-            info_recorder[3] += time.time() - tic  # train
+            # default_stream.synchronize()
+            # info_recorder[2] += time.time() - tic  # train
 
         graph_loader.join()
         feats_loader.join()
+        torch.cuda.synchronize()
+        epoch_time = time.time() - start
+
         print(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
-            f"Transfer Time: {info_recorder[2]:.3f}\t"
-            f"Train Time: {info_recorder[3]:.3f}\t"
-            f"Epoch Time: {np.sum(info_recorder[:4]):.3f}\t"
-            f"Feature Transfer size: {info_recorder[4]}\t"
+            f"Train Time: {info_recorder[2]:.3f}\t"
+            f"Epoch Time: {np.sum(info_recorder[:3]):.3f}\t"
+            f"Cold Feats num: {info_recorder[3]}\t"
+            f"Feature Transfer num: {info_recorder[4]}\t"
         )
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
-        epoch_info_recorder[-1].append(np.sum(info_recorder[:4]))
+        epoch_info_recorder[-1].append(epoch_time)
+        # epoch_info_recorder[-1].append(np.sum(info_recorder[:3]))
 
-        with open("logs/train_multi_thread_decompose.csv", "a") as f:
-            writer = csv.writer(f, lineterminator="\n")
-            log_info = [
-                args.dataset,
-                args.fanout,
-                args.batchsize,
-                args.feat_cache_size,
-                args.model,
-                args.num_epoch,
-            ]
-            for epoch_info in epoch_info_recorder:
-                log_info.append(round(np.mean(epoch_info[1:]), 2))
-            writer.writerow(log_info)
+    with open("logs/train_multi_thread_decompose.csv", "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.feat_cache_size,
+            args.model,
+            args.num_epoch,
+        ]
+        for epoch_info in epoch_info_recorder:
+            log_info.append(round(np.mean(epoch_info[1:]), 2))
+        writer.writerow(log_info)
 
 
 if __name__ == "__main__":
@@ -164,7 +174,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument(
-        "--dir", type=str, default="/nvme1n1", help="path to store subgraph"
+        "--dir",
+        type=str,
+        default="/nvme1n1/offgs_dataset",
+        help="path to store subgraph",
     )
     parser.add_argument(
         "--feat-cache-size", type=int, default=1000000000, help="cache size in bytes"

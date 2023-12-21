@@ -25,7 +25,9 @@ def run(args, dataset, label_offset):
     split_idx_path = os.path.join(dataset_path, "split_idx.pth")
 
     print("Saving features...")
-    features_mmap = np.memmap(features_path, mode="w+", shape=features.shape, dtype=np.float32)
+    features_mmap = np.memmap(
+        features_path, mode="w+", shape=features.shape, dtype=np.float32
+    )
     features_mmap[:] = features[:]
     features_mmap.flush()
     print("Done!")
@@ -54,10 +56,22 @@ def run(args, dataset, label_offset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--store-path", default="/nvme1n1", help="path to store subgraph")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="ogbn-products",
+        help="which dataset to load for training",
+    )
+    parser.add_argument(
+        "--store-path", default="/nvme1n1/offgs_dataset", help="path to store subgraph"
+    )
     parser.add_argument("--path", type=str, default="/efs/rjliu/dataset/igb_full")
-    parser.add_argument("--dataset_size", type=str, default="full", choices=["tiny", "small", "medium", "large", "full"])
+    parser.add_argument(
+        "--dataset_size",
+        type=str,
+        default="full",
+        choices=["tiny", "small", "medium", "large", "full"],
+    )
     parser.add_argument("--num_classes", type=int, default=19)
     parser.add_argument("--in_memory", type=int, default=0)
     parser.add_argument("--synthetic", type=int, default=0)

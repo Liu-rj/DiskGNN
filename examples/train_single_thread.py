@@ -150,7 +150,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument(
-        "--dir", type=str, default="/nvme1n1", help="path to store subgraph"
+        "--dir", type=str, default="/nvme1n1/offgs_dataset", help="path to store subgraph"
     )
     parser.add_argument(
         "--feat-cache-size", type=int, default=1000000000, help="cache size in bytes"
