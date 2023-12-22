@@ -77,6 +77,8 @@ def run(dataset, args):
 
         tic = time.time()
         packed_feats: torch.Tensor = features[cold_nodes.long().cpu()]
+        feature_dim = packed_feats.shape[1]
+        
         # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
         # packed_feats = torch.ops.offgs._CAPI_GatherPRead(dataset.features_path, cold_nodes.cpu(), dataset.num_features)
         feat_load_time += time.time() - tic
@@ -84,7 +86,7 @@ def run(dataset, args):
         tic = time.time()
         aux_data = torch.cat([packed_feats.flatten(), cold_nodes.cpu(), hot_nodes.cpu(), rev_hot_idx.cpu(), rev_cold_idx.cpu()])
         stored_data = np.memmap(f"{aux_dir}/train-aux-{i}.npy", mode='w+', shape=aux_data.numel() + 5, dtype=np.float32)
-        stored_data[:5] = [np.float32(packed_feats.numel()), np.float32(cold_nodes.numel()), np.float32(hot_nodes.numel()), np.float32(rev_hot_idx.numel()), np.float32(rev_cold_idx.numel())]
+        stored_data[:5] = [np.float32(feature_dim), np.float32(cold_nodes.numel()), np.float32(hot_nodes.numel()), np.float32(rev_hot_idx.numel()), np.float32(rev_cold_idx.numel())]
         ## has a small problem here print("{:.1f}".format(stored_data[0])) [TODO] use float64 instead and design it in another file
         # 90733504.0
         # packed_feats.numel()
@@ -121,7 +123,7 @@ def run(dataset, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=2000, help="batch size for training")
+    parser.add_argument("--batchsize", type=int, default=10000, help="batch size for training")
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")

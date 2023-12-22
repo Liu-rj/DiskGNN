@@ -100,8 +100,8 @@ def run(args, dataset, label_offset):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=2000, help="batch size for training")
-    parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
+    parser.add_argument("--batchsize", type=int, default=10000, help="batch size for training")
+    parser.add_argument("--fanout", type=str, default="10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     args = parser.parse_args()
     print(args)

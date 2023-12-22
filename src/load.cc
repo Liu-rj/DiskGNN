@@ -99,7 +99,10 @@ std::vector<torch::Tensor> LoadFeats_ODirect(const std::string& file_path,
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
       torch::from_blob(read_buffer, data_size / sizeof(float), options);
-  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt32).cumsum(0);
+  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt32);
+  //avoid overflow of size[0]
+  sizes[0] = sizes[0] * sizes[1];
+  sizes = sizes.cumsum(0);
   auto sizes_ptr = sizes.data_ptr<int64_t>();
 
   std::vector<torch::Tensor> res;

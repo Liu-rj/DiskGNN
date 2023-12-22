@@ -44,6 +44,10 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
         input_feat_size, input_node_num = 0, 0
         cold_feats_num = 0
         graph_transfer_time, feat_transfer_time = 0, 0
+        subgraph_sampler_init_time = 0
+        sampler = NeighborSampler(
+                [10, 10, 10])
+        
 
         torch.cuda.synchronize()
         start = time.time()
@@ -57,7 +61,8 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
-            subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
+            if args.batchsize != 1000:
+                subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             graph_load_time += time.time() - tic
             tic = time.time()
@@ -79,8 +84,6 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             if args.batchsize != 1000:
                 tic = time.time()
                 rev_idx=subgraph.train_idx.to(device)
-                sampler = NeighborSampler(
-                [10, 10, 10])
                 sub_train_dataloader = DataLoader(
                         subgraph,
                         rev_idx,
@@ -92,25 +95,33 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                         num_workers=0,
                         use_uva=True,
                     )
+                torch.cuda.synchronize()
+                subgraph_sampler_init_time += time.time() - tic
+                
                 for it, (input_nodes, output_nodes, blocks) in enumerate(
                     sub_train_dataloader
                 ):
                     output_nodes=output_nodes.cpu()
+                    tic = time.time()
                     h=x[input_nodes.cpu()].to(device)
+                    torch.cuda.synchronize()
+                    feat_transfer_time += time.time() - tic
                     if args.dataset=='yelp':
                         y=labels[output_nodes.long()].to(device).long().to(torch.float64)
                     elif args.dataset=='ogbn-papers100M':
                         y =labels[output_nodes.long()].to(device).long().to(torch.int64)
                     else:
                         y = labels[output_nodes.long()].to(device).long()
+                    tic = time.time()
                     y_hat = model(blocks, h)
                     ## cal the acc
                     loss = F.cross_entropy(y_hat, y)
                     opt.zero_grad()
                     loss.backward()
                     opt.step()
-                ## TODO reconstruct the blocks and do sample
-                # blocks = [block.to(device) for block in blocks]
+                    torch.cuda.synchronize()
+                    train_time += time.time() - tic
+                
             else:
                 tic = time.time()
                 blocks = [block.to(device) for block in blocks]
@@ -140,6 +151,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             f"Feature Load Time: {feats_load_time:.3f}\t"
             f"Assemble Time: {assemble_time:.3f}\t"
             f"Graph Transfer Time: {graph_transfer_time:.3f}\t"
+            f"Sample init Time: {subgraph_sampler_init_time:.3f}\t"
             f"Feat Transfer Time: {feat_transfer_time:.3f}\t"
             f"Train Time: {train_time:.3f}\t"
             f"Epoch Time: {(epoch_time - clear_cache):.3f}\t"
@@ -171,7 +183,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
-    parser.add_argument("--batchsize", type=int, default=2000, help="batch size for training")
+    parser.add_argument("--batchsize", type=int, default=10000, help="batch size for training")
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
