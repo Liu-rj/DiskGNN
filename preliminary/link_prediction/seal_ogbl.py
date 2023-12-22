@@ -402,7 +402,7 @@ if __name__ == "__main__":
     )
     # Training settings
     parser.add_argument("--lr", type=float, default=0.0001)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--train_percent", type=float, default=100)
     parser.add_argument("--val_percent", type=float, default=100)
@@ -611,16 +611,16 @@ if __name__ == "__main__":
                 for key, result in results.items():
                     loggers[key].add_result(run, result)
 
-                model_name = os.path.join(
-                    args.res_dir,
-                    "run{}_model_checkpoint{}.pth".format(run + 1, epoch),
-                )
-                optimizer_name = os.path.join(
-                    args.res_dir,
-                    "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch),
-                )
-                torch.save(model.state_dict(), model_name)
-                torch.save(optimizer.state_dict(), optimizer_name)
+                # model_name = os.path.join(
+                #     args.res_dir,
+                #     "run{}_model_checkpoint{}.pth".format(run + 1, epoch),
+                # )
+                # optimizer_name = os.path.join(
+                #     args.res_dir,
+                #     "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch),
+                # )
+                # torch.save(model.state_dict(), model_name)
+                # torch.save(optimizer.state_dict(), optimizer_name)
 
                 for key, result in results.items():
                     valid_res, test_res = result

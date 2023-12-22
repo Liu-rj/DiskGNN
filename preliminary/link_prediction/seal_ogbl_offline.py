@@ -257,16 +257,20 @@ def get_pos_neg_edges(split, split_edge, g, percent=100):
     return pos_edge, neg_edge  # ([2, Np], [2, Nn]) -> ([Np, 2], [Nn, 2])
 
 
-def train(graph_path, device, batch_size):
+def train(graph_path, device, batch_size, num_parts):
     model.train()
     loss_fnt = BCEWithLogitsLoss()
     total_loss = 0
     total = 0
-    graphs, label_dict = dgl.load_graphs(graph_path + "0.bin")
+    # graphs, label_dict = dgl.load_graphs(graph_path + "0.bin")
+    partition_id = 0
+    num_batches = 2000
     for batch in tqdm(range(len(train_loader))):
-        # if batch % 2000 == 0:
-        #     graphs, label_dict = dgl.load_graphs(graph_path + f"{batch // 2000}.bin")
-        id = np.random.randint(0, len(graphs) // batch_size)
+        if batch % num_batches == 0:
+            graphs, label_dict = dgl.load_graphs(graph_path + f"{partition_id}.bin")
+            partition_id = (partition_id + 1) % num_parts
+            num_batches = len(graphs) // batch_size
+        id = np.random.randint(0, num_batches)
         gs = graphs[id * batch_size : (id + 1) * batch_size]
         gs = dgl.batch(gs).to(device)
         y = label_dict["labels"][id].to(device)
@@ -412,7 +416,7 @@ if __name__ == "__main__":
     )
     # Training settings
     parser.add_argument("--lr", type=float, default=0.0001)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--train_percent", type=float, default=100)
     parser.add_argument("--val_percent", type=float, default=100)
@@ -426,7 +430,7 @@ if __name__ == "__main__":
     # Testing settings
     parser.add_argument("--use_valedges_as_input", action="store_true")
     parser.add_argument("--eval_steps", type=int, default=1)
-    parser.add_argument("--tag", type=str, default="")
+    parser.add_argument("--num_parts", type=int, default=6)
     args = parser.parse_args()
 
     data_appendix = "_rph{}".format("".join(str(args.ratio_per_hop).split(".")))
@@ -435,7 +439,7 @@ if __name__ == "__main__":
 
     args.res_dir = os.path.join(
         "results_offline/{}_{}_{}".format(
-            args.dataset, time.strftime("%Y%m%d%H%M%S"), args.tag
+            args.dataset, time.strftime("%Y%m%d%H%M%S"), args.num_parts
         )
     )
     print("Results will be saved in " + args.res_dir)
@@ -596,7 +600,7 @@ if __name__ == "__main__":
         drop_last=True,
     )
 
-    graph_path = "offline_data/partition_"
+    graph_path = "data/offline_data/partition_"
     # pre_sampled_gs, labels = [], []
     # with train_loader.enable_cpu_affinity():
     #     for it, (subgs, y) in tqdm(enumerate(train_loader), total=len(train_loader)):
@@ -643,23 +647,23 @@ if __name__ == "__main__":
         start_epoch = 1
         # Training starts
         for epoch in range(start_epoch, start_epoch + args.epochs):
-            loss = train(graph_path, device, args.batch_size)
+            loss = train(graph_path, device, args.batch_size, args.num_parts)
 
             if epoch % args.eval_steps == 0:
                 results = test()
                 for key, result in results.items():
                     loggers[key].add_result(run, result)
 
-                model_name = os.path.join(
-                    args.res_dir,
-                    "run{}_model_checkpoint{}.pth".format(run + 1, epoch),
-                )
-                optimizer_name = os.path.join(
-                    args.res_dir,
-                    "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch),
-                )
-                torch.save(model.state_dict(), model_name)
-                torch.save(optimizer.state_dict(), optimizer_name)
+                # model_name = os.path.join(
+                #     args.res_dir,
+                #     "run{}_model_checkpoint{}.pth".format(run + 1, epoch),
+                # )
+                # optimizer_name = os.path.join(
+                #     args.res_dir,
+                #     "run{}_optimizer_checkpoint{}.pth".format(run + 1, epoch),
+                # )
+                # torch.save(model.state_dict(), model_name)
+                # torch.save(optimizer.state_dict(), optimizer_name)
 
                 for key, result in results.items():
                     valid_res, test_res = result
