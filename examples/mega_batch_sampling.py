@@ -29,7 +29,7 @@ def find_indices_in(a, b):
 
 def run(args, dataset, label_offset):
     fanout = [int(x) for x in args.fanout.split(",")]
-    output_dir = f"{args.store_path}/{args.dataset}-{args.batchsize}--{args.fanout}"
+    output_dir = f"{args.store_path}/{args.dataset}-{args.batchsize}-{args.fanout}"
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
@@ -56,34 +56,27 @@ def run(args, dataset, label_offset):
     start = time.time()
     for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader)):
         
-
+        ##[Caution]: maybe poor efficiency.
         eids = torch.cat([block.edata[dgl.EID] for block in blocks])
         eids= torch.unique(eids)
         subgraph = dgl.edge_subgraph(g, eids.cpu(), relabel_nodes=True)
         rev_idx = find_indices_in(output_nodes.cpu().numpy(), subgraph.ndata[dgl.NID].numpy())
         rev_idx = torch.from_numpy(rev_idx).to('cuda')
-        # subgraph=subgraph.int()
         subgraph.ndata.clear()
         subgraph.edata.clear()
         subgraph.srcdata.clear()
         subgraph.dstdata.clear()
         subgraph.train_idx=rev_idx
         for it, block in enumerate(blocks):
-            block = block.int()
             block.ndata.clear()
             block.edata.clear()
             block.srcdata.clear()
             block.dstdata.clear()
             blocks[it] = block
-        ## covert to a tensor on gpu
-        # rev_idx = torch.from_numpy(rev_idx).to(device)
-        # subgraph = subgraph.remove_self_loop()
-        # subgraph = subgraph.add_self_loop()
-        # # subgraph.train_idx=rev_idx.to('cpu')
         torch.save(subgraph, f"{output_dir}/subgraph_{i}.pt")
         torch.save(blocks, f"{output_dir}/train-{i}.pt")
-        torch.save(input_nodes.type(torch.int32), f"{output_dir}/in-nid-{i}.pt")
-        torch.save(output_nodes.type(torch.int32), f"{output_dir}/out-nid-{i}.pt")
+        torch.save(input_nodes, f"{output_dir}/in-nid-{i}.pt")
+        torch.save(output_nodes, f"{output_dir}/out-nid-{i}.pt")
         node_counts[input_nodes.cuda()] += 1
     sampling_time = time.time() - start
     sorted_idx = torch.argsort(node_counts, descending=True).cpu()
@@ -101,7 +94,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=10000, help="batch size for training")
-    parser.add_argument("--fanout", type=str, default="10,10", help="sampling fanout")
+    parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     args = parser.parse_args()
     print(args)

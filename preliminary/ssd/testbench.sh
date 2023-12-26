@@ -256,3 +256,5 @@
 
 # sudo fio -filename=./temp/testfile -direct=1 -iodepth=64 -thread -rw=randread -ioengine=libaio \
 #     -bs=1024k -size=2G -numjobs=4 -group_reporting -name=randread1024k -runtime=30s
+
+fio -filename=/nvme2n1/fio_testfile -direct=1 -iodepth=512 -thread -rw=randread -ioengine=libaio -bs=64k -size=2G -numjobs=64 -group_reporting -name=randread64k -runtime=30s

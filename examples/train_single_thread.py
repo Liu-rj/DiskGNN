@@ -16,7 +16,7 @@ from queue import Queue
 import threading
 import psutil
 import csv
-
+from dgl.utils import gather_pinned_tensor_rows
 import offgs
 
 
@@ -27,23 +27,21 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
     labels = dataset.labels.pin_memory()
 
     if args.model == "SAGE":
-        model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(device)
+        model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(
+            device
+        )
     elif args.model == "GAT":
         model = GAT(dataset.num_features, 256, dataset.num_classes, [8, 2]).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_time_list, clear_cache_list = [], []
+    epoch_info_recorder = [[] for i in range(10)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        clear_cache, train_time = 0, 0
-        graph_load_time, feats_load_time, assemble_time = 0, 0, 0
-        input_feat_size, input_node_num = 0, 0
-        cold_feats_num = 0
-        graph_transfer_time, feat_transfer_time = 0, 0
+        info_recorder = [0] * 10
         subgraph_sampler_init_time = 0
         sampler = NeighborSampler(
                 [10, 10, 10])
@@ -64,21 +62,41 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             if args.batchsize != 1000:
                 subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
-            graph_load_time += time.time() - tic
+            info_recorder[0] += time.time() - tic  # graph load
             tic = time.time()
-            cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.ops.offgs._CAPI_LoadFeats_ODirect(
-                f"{aux_dir}/train-aux-{i}.npy", dataset.num_features, 8
+            (
+                cold_feats,
+                cold_nodes,
+                hot_nodes,
+                rev_hot_idx,
+                rev_cold_idx,
+            ) = torch.ops.offgs._CAPI_LoadFeats_Direct_OMP(
+                f"{aux_dir}/train-aux-{i}.npy",
+                dataset.num_features,8
             )
-            feats_load_time += time.time() - tic
-            cold_feats_num += cold_feats.shape[0]
+            # cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.load(
+            #     f"{aux_dir}/train-aux-{i}.pt"
+            # )
+            info_recorder[1] += time.time() - tic  # feature load
+            info_recorder[6] += cold_feats.shape[0]  # cold_feats_num
 
             tic = time.time()
             num_input = cold_nodes.numel() + hot_nodes.numel()
-            x = torch.empty((num_input, dataset.num_features), dtype=torch.float32)
-            x[rev_cold_idx.long()] = cold_feats
+            ## large overhead
+            x = torch.empty(
+                (num_input, dataset.num_features),
+                dtype=torch.float32,
+                # pin_memory=True,
+            )
+            
+            x[rev_cold_idx] = cold_feats
             # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
-            torch.ops.offgs._CAPI_GatherInMem(x, rev_hot_idx, cached_feats, hot_nodes, address_table)
-            assemble_time += time.time() - tic
+            torch.ops.offgs._CAPI_GatherInMem(
+                x, rev_hot_idx, cached_feats, hot_nodes, address_table
+            )
+            x=x.pin_memory()
+            info_recorder[2] += time.time() - tic  # assemble
+            
 
             
             if args.batchsize != 1000:
@@ -97,21 +115,26 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                     )
                 torch.cuda.synchronize()
                 subgraph_sampler_init_time += time.time() - tic
-                
+                ## may need to cal sample time here modify code!
+                sample_begin_time=time.time()
                 for it, (input_nodes, output_nodes, blocks) in enumerate(
                     sub_train_dataloader
-                ):
+                ):  
                     output_nodes=output_nodes.cpu()
-                    tic = time.time()
-                    h=x[input_nodes.cpu()].to(device)
                     torch.cuda.synchronize()
-                    feat_transfer_time += time.time() - tic
+                    info_recorder[3]+=time.time()-sample_begin_time
+                    tic = time.time()
+                    h =gather_pinned_tensor_rows(x,input_nodes)
+                    # h=x[input_nodes.cpu()].to(device)
                     if args.dataset=='yelp':
-                        y=labels[output_nodes.long()].to(device).long().to(torch.float64)
+                        y=labels[output_nodes].to(device).long().to(torch.float64)
                     elif args.dataset=='ogbn-papers100M':
-                        y =labels[output_nodes.long()].to(device).long().to(torch.int64)
+                        y =labels[output_nodes].to(device).long().to(torch.int64)
                     else:
-                        y = labels[output_nodes.long()].to(device).long()
+                        y = labels[output_nodes].to(device).long()
+                    torch.cuda.synchronize()
+                    info_recorder[4] += time.time() - tic  # feature transfer
+                    info_recorder[7] += h.shape[0]  # input node num
                     tic = time.time()
                     y_hat = model(blocks, h)
                     ## cal the acc
@@ -120,21 +143,20 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                     loss.backward()
                     opt.step()
                     torch.cuda.synchronize()
-                    train_time += time.time() - tic
+                    info_recorder[5] += time.time() - tic
+                    sample_begin_time=time.time()
                 
             else:
                 tic = time.time()
                 blocks = [block.to(device) for block in blocks]
                 torch.cuda.synchronize()
-                graph_transfer_time += time.time() - tic
+                info_recorder[3] += time.time() - tic  # graph transfer
                 tic = time.time()
                 x = x.to(device)
-                y = labels[output_nodes.long()].to(device).long()
+                y = labels[output_nodes].to(device).long()
                 torch.cuda.synchronize()
-                feat_transfer_time += time.time() - tic
-                input_node_num += x.shape[0]
-                input_feat_size += x.shape[0] * x.shape[1]
-
+                info_recorder[4] += time.time() - tic  # feature transfer
+                info_recorder[7] += x.shape[0]  # input node num
                 tic = time.time()
                 pred = model(blocks, x)
                 loss = F.cross_entropy(pred, y)
@@ -142,61 +164,62 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                 loss.backward()
                 opt.step()
                 torch.cuda.synchronize()
-                train_time += time.time() - tic
+                info_recorder[5] += time.time() - tic
 
-        torch.cuda.synchronize()
-        epoch_time = time.time() - start
         print(
-            f"Graph Load Time: {graph_load_time:.3f}\t"
-            f"Feature Load Time: {feats_load_time:.3f}\t"
-            f"Assemble Time: {assemble_time:.3f}\t"
-            f"Graph Transfer Time: {graph_transfer_time:.3f}\t"
-            f"Sample init Time: {subgraph_sampler_init_time:.3f}\t"
-            f"Feat Transfer Time: {feat_transfer_time:.3f}\t"
-            f"Train Time: {train_time:.3f}\t"
-            f"Epoch Time: {(epoch_time - clear_cache):.3f}\t"
-            f"Drop Cache Time: {clear_cache:.3f}"
+            f"Graph Load Time: {info_recorder[0]:.3f}\t"
+            f"Feature Load Time: {info_recorder[1]:.3f}\t"
+            f"Assemble Time: {info_recorder[2]:.3f}\t"
+            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
+            f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
+            f"Train Time: {info_recorder[5]:.3f}\t"
+            f"Epoch Time: {np.sum(info_recorder[:6]):.3f}\t"
+            f"Cold Feats Num: {info_recorder[6]}\t"
+            f"Feature Transfer Num: {info_recorder[7]}\t"
         )
-        print(f"Cold Feats Num: {cold_feats_num}\t" f"Feature Transfer size: {input_feat_size}\t" f"Input Node num: {input_node_num}")
-        epoch_time_list.append(epoch_time)
-        clear_cache_list.append(clear_cache)
+        for i, info in enumerate(info_recorder):
+            epoch_info_recorder[i].append(info)
+        epoch_info_recorder[-1].append(np.sum(info_recorder[:6]))
 
-        with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
-            writer = csv.writer(f, lineterminator="\n")
-            log_info = [
-                args.dataset,
-                round(graph_load_time, 3),
-                round(feats_load_time, 3),
-                round(assemble_time, 3),
-                round(graph_transfer_time, 3),
-                round(feat_transfer_time, 3),
-                round(train_time, 3),
-                round(epoch_time - clear_cache, 3),
-            ]
-            writer.writerow(log_info)
-
-    torch.cuda.synchronize()
-    avg_clear_cache = np.mean(clear_cache_list[1:])
-    print(f"Avg Clear Cache Time: {avg_clear_cache:.3f}\t" f"Avg Epoch Time: {(np.mean(epoch_time_list[1:]) - avg_clear_cache):.3f}")
+    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.feat_cache_size,
+            args.model,
+            args.num_epoch,
+        ]
+        for epoch_info in epoch_info_recorder:
+            log_info.append(round(np.mean(epoch_info[1:]), 2))
+        writer.writerow(log_info)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
-    parser.add_argument("--batchsize", type=int, default=10000, help="batch size for training")
+    parser.add_argument(
+        "--batchsize", type=int, default=10000, help="batch size for training"
+    )
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
-    parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
+    parser.add_argument(
+        "--fanout", type=str, default="10,10,10", help="sampling fanout"
+    )
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
-    parser.add_argument("--dir", type=str, default="/nvme2n1", help="path to store subgraph")
-    parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")
-    parser.add_argument("--num-epoch", type=int, default=3, help="numbers of epoch in training")
+    parser.add_argument(
+        "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
+    )
+    parser.add_argument(
+        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
+    )
+    parser.add_argument(
+        "--num-epoch", type=int, default=3, help="numbers of epoch in training"
+    )
     args = parser.parse_args()
     print(args)
 
-    subg_dir = f"{args.dir}/{args.dataset}-{args.fanout}"
-    if args.batchsize != 1000:
-            subg_dir = f"{args.dir}/{args.dataset}-{args.batchsize}--{args.fanout}"
-
+    subg_dir = f"{args.dir}/{args.dataset}-{args.batchsize}-{args.fanout}"
     aux_dir = f"{subg_dir}/cache-size-{args.feat_cache_size}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
@@ -208,7 +231,9 @@ if __name__ == "__main__":
 
     dataset = OffgsDataset(dataset_dir)
     cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
-    cached_feats = torch.empty((cached_nodes.numel(), dataset.num_features), dtype=torch.float32)
+    cached_feats = torch.empty(
+        (cached_nodes.numel(), dataset.num_features), dtype=torch.float32
+    )
     cached_feats[:] = dataset.mmap_features[cached_nodes]
     address_table = torch.load(f"{aux_dir}/address_table.pt")
 

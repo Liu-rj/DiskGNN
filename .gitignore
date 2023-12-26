@@ -5,6 +5,7 @@ models
 temp
 imgs
 logs
+results
 
 build
 dist

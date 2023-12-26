@@ -1,5 +1,5 @@
 # python prepare_dataset.py --dataset=ogbn-products
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python sampling.py --dataset=ogbn-products --fanout="10,10,10"
+# sudo env PATH=$PATH python sampling.py --dataset=ogbn-products --fanout="10,10,10"
 
 # python feat_packing.py --dataset=ogbn-products --feat-cache-size=100000000
 # python train.py --dataset=ogbn-products --feat-cache-size=100000000
@@ -40,36 +40,42 @@
 
 
 # python prepare_dataset.py --dataset=ogbn-products
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python sampling.py --dataset=ogbn-products --fanout="10,10,10"
+# sudo env PATH=$PATH python sampling.py --dataset=ogbn-products --fanout="10,10,10"
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=ogbn-products --feat-cache-size=200000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=ogbn-products --feat-cache-size=200000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=200000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=200000000
+sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=200000000
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=ogbn-products --feat-cache-size=600000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=ogbn-products --feat-cache-size=600000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=600000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=600000000
+sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=600000000
 
 
 
 
 
 # python prepare_dataset.py --dataset=ogbn-papers100M
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python sampling.py --dataset=ogbn-papers100M --fanout="10,10,10"
+# sudo env PATH=$PATH python sampling.py --dataset=ogbn-papers100M --fanout="10,10,10"
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
+sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
+sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
 
 
 
 
 
 # python prepare_dataset.py --dataset=friendster
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python sampling.py --dataset=friendster --fanout="10,10,10"
+# sudo env PATH=$PATH python sampling.py --dataset=friendster --fanout="10,10,10"
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=friendster --feat-cache-size=6400000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=friendster --feat-cache-size=6400000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=6400000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --feat-cache-size=6400000000
+sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=6400000000
 
-# sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python feat_packing.py --dataset=friendster --feat-cache-size=19200000000
-sudo PYTHONPATH=/opt/conda/envs/npc/lib/python3.9/site-packages /opt/conda/envs/npc/bin/python train_single_thread.py --dataset=friendster --feat-cache-size=19200000000
+# sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=19200000000
+# sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --feat-cache-size=19200000000
+sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=19200000000
