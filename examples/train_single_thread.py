@@ -99,7 +99,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             
 
             
-            if args.batchsize != 1000:
+            if args.mega_batch == True:
                 tic = time.time()
                 rev_idx=subgraph.train_idx.to(device)
                 sub_train_dataloader = DataLoader(
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
     parser.add_argument(
-        "--batchsize", type=int, default=10000, help="batch size for training"
+        "--batchsize", type=int, default=5000, help="batch size for training"
     )
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
     parser.add_argument(
@@ -216,6 +216,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
     )
+    ## argument whether use mega batch sampling
+    parser.add_argument('--mega_batch', action='store_false',help='whether use mega batch sampling')
     args = parser.parse_args()
     print(args)
 

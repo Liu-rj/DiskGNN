@@ -101,7 +101,7 @@ if __name__ == "__main__":
         help="which dataset to load for training",
     )
     parser.add_argument(
-        "--batchsize", type=int, default=1000, help="batch size for training"
+        "--batchsize", type=int, default=5000, help="batch size for training"
     )
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     label_offset = 0
     if args.dataset.startswith("ogbn"):
-        dataset = load_ogb(args.dataset, "/nvme1n1/dataset")
+        dataset = load_ogb(args.dataset, "/efs/rjliu/dataset")
     elif args.dataset.startswith("igb"):
         dataset = load_igb(args)
     elif args.dataset == "mag240m":
