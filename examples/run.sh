@@ -42,13 +42,13 @@
 # python prepare_dataset.py --dataset=ogbn-products
 # sudo env PATH=$PATH python sampling.py --dataset=ogbn-products --fanout="10,10,10"
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=200000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=200000000
-sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=200000000
+sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=200000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --gpu-cache-size=200000000 --cpu-cache-size=0
+# sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=200000000
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=600000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=600000000
-sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=600000000
+sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=600000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --gpu-cache-size=600000000 --cpu-cache-size=0
+# sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=600000000
 
 
 
@@ -57,13 +57,13 @@ sudo env PATH=$PATH python train.py --dataset=ogbn-products --feat-cache-size=60
 # python prepare_dataset.py --dataset=ogbn-papers100M
 # sudo env PATH=$PATH python sampling.py --dataset=ogbn-papers100M --fanout="10,10,10"
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
-sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
+sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --gpu-cache-size=8000000000 --cpu-cache-size=2000000000
+# sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=10000000000
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
-sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
+sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-papers100M --gpu-cache-size=8000000000 --cpu-cache-size=24000000000
+# sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=32000000000
 
 
 
@@ -72,10 +72,10 @@ sudo env PATH=$PATH python train.py --dataset=ogbn-papers100M --feat-cache-size=
 # python prepare_dataset.py --dataset=friendster
 # sudo env PATH=$PATH python sampling.py --dataset=friendster --fanout="10,10,10"
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=6400000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --feat-cache-size=6400000000
-sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=6400000000
+sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=6400000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cache-size=6400000000 --cpu-cache-size=0
+# sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=6400000000
 
-# sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=19200000000
-# sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --feat-cache-size=19200000000
-sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=19200000000
+sudo env PATH=$PATH python feat_packing.py --dataset=friendster --feat-cache-size=19200000000
+sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cache-size=8000000000 --cpu-cache-size=11200000000
+# sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=19200000000

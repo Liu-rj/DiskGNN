@@ -47,14 +47,14 @@ def run(dataset, args):
         raise ValueError
     print(f"#Cached Entries: {num_entries} / {dataset.num_nodes}")
     cache_indices = sorted_idx[:num_entries]
-    address_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32)
-    address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
+    # address_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32)
+    # address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
     torch.save(cache_indices, f"{aux_dir}/cached_nodes.pt")
-    torch.save(address_table, f"{aux_dir}/address_table.pt")
+    # torch.save(address_table, f"{aux_dir}/address_table.pt")
     key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to("cuda"))
     cache_init_time = time.time() - tic
 
-    for i in trange(num_batches):
+    for i in trange(num_batches, ncols=100):
         # tic = time.time()
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
         #     stream.write("1\n")
@@ -89,38 +89,18 @@ def run(dataset, args):
         feat_load_time += time.time() - tic
 
         tic = time.time()
-        aux_data = torch.cat(
-            [
-                packed_feats.flatten(),
-                cold_nodes.cpu(),
-                hot_nodes.cpu(),
-                rev_hot_idx.cpu(),
-                rev_cold_idx.cpu(),
-            ]
-        )
-        stored_data = np.memmap(
-            f"{aux_dir}/train-aux-{i}.npy",
-            mode="w+",
-            shape=aux_data.numel() + 5,
-            dtype=np.float32,
-        )
-        stored_data[:5] = [
-            packed_feats.numel(),
-            cold_nodes.numel(),
-            hot_nodes.numel(),
-            rev_hot_idx.numel(),
-            rev_cold_idx.numel(),
-        ]
-        stored_data[5:] = aux_data
-        stored_data.flush()
-        # aux_data = [
-        #     packed_feats,
-        #     cold_nodes.cpu(),
-        #     hot_nodes.cpu(),
-        #     rev_hot_idx.cpu(),
-        #     rev_cold_idx.cpu(),
-        # ]
-        # torch.save(aux_data, f"{aux_dir}/train-aux-{i}.pt")
+        aux_meta_data = [cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx]
+        torch.save(aux_meta_data, f"{aux_dir}/train-aux-meta-{i}.pt")
+
+        if cold_nodes.numel() > 0:
+            mmap_packed_feats = np.memmap(
+                f"{aux_dir}/train-aux-{i}.npy",
+                mode="w+",
+                shape=packed_feats.numel(),
+                dtype=np.float32,
+            )
+            mmap_packed_feats[:] = packed_feats.flatten()
+            mmap_packed_feats.flush()
         save_time += time.time() - tic
 
     total_time = time.time() - start

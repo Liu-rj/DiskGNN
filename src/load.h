@@ -10,6 +10,7 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
                                      int64_t omp_threads);
 
 std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
+                                            int64_t num_indices,
                                             int64_t feature_dim);
 
 torch::Tensor LoadTensor(const std::string& file_path);

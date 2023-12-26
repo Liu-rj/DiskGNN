@@ -2,6 +2,7 @@
 #include <torch/script.h>
 
 #include "cuda/difference.h"
+#include "cuda/gather.h"
 #include "gather.h"
 #include "load.h"
 
@@ -12,6 +13,7 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_GatherPRead", &GatherPRead);
   m.def("_CAPI_GatherPReadDirect", &GatherPReadDirect);
   m.def("_CAPI_GatherInMem", &GatherInMem);
+  m.def("_CAPI_GatherInGPU", &cuda::GatherInGPU);
   m.def("_CAPI_BuildHashMap", &cuda::BuildHashMap);
   m.def("_CAPI_QueryHashMap", &cuda::QueryHashMap);
   m.def("_CAPI_Difference", &cuda::Difference);

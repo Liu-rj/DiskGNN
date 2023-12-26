@@ -20,11 +20,21 @@ import csv
 import offgs
 
 
-def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, aux_dir):
+def train(
+    args,
+    dataset: OffgsDataset,
+    address_table: torch.Tensor,
+    cpu_cached_feats: torch.Tensor,
+    gpu_cached_feats: torch.Tensor,
+    subg_dir: str,
+    aux_dir: str,
+    cached_nodes: torch.Tensor,
+):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
 
     labels = dataset.labels.pin_memory()
+    cpu_cached_feats = cpu_cached_feats.pin_memory()
 
     if args.model == "SAGE":
         model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(
@@ -47,7 +57,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
         start = time.time()
 
         model.train()
-        for i in trange(size):
+        for i in trange(size, ncols=100):
             # tic = time.time()
             # with open("/proc/sys/vm/drop_caches", "w") as stream:
             #     stream.write("1\n")
@@ -59,32 +69,40 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             info_recorder[0] += time.time() - tic  # graph load
             tic = time.time()
             (
-                cold_feats,
                 cold_nodes,
                 hot_nodes,
                 rev_hot_idx,
                 rev_cold_idx,
-            ) = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                f"{aux_dir}/train-aux-{i}.npy",
-                dataset.num_features,
-            )
+            ) = torch.load(f"{aux_dir}/train-aux-meta-{i}.pt")
+            if cold_nodes.numel() > 0:
+                (cold_feats,) = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                    f"{aux_dir}/train-aux-{i}.npy",
+                    cold_nodes.numel(),
+                    dataset.num_features,
+                )
             # cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.load(
             #     f"{aux_dir}/train-aux-{i}.pt"
             # )
             info_recorder[1] += time.time() - tic  # feature load
-            info_recorder[6] += cold_feats.shape[0]  # cold_feats_num
+            info_recorder[6] += cold_nodes.numel()  # cold_feats_num
 
             tic = time.time()
             num_input = cold_nodes.numel() + hot_nodes.numel()
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
-                pin_memory=True,
+                device=device,
             )
-            x[rev_cold_idx] = cold_feats
-            # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
-            torch.ops.offgs._CAPI_GatherInMem(
-                x, rev_hot_idx, cached_feats, hot_nodes, address_table
+            if cold_nodes.numel() > 0:
+                x[rev_cold_idx] = cold_feats
+                # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
+            torch.ops.offgs._CAPI_GatherInGPU(
+                x,
+                rev_hot_idx,
+                cpu_cached_feats,
+                gpu_cached_feats,
+                hot_nodes,
+                address_table,
             )
             info_recorder[2] += time.time() - tic  # assemble
 
@@ -93,7 +111,6 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             torch.cuda.synchronize()
             info_recorder[3] += time.time() - tic  # graph transfer
             tic = time.time()
-            x = x.to(device)
             y = labels[output_nodes].to(device).long()
             torch.cuda.synchronize()
             info_recorder[4] += time.time() - tic  # feature transfer
@@ -129,13 +146,37 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             args.dataset,
             args.fanout,
             args.batchsize,
-            args.feat_cache_size,
+            args.cpu_cache_size,
+            args.gpu_cache_size,
             args.model,
             args.num_epoch,
         ]
         for epoch_info in epoch_info_recorder:
             log_info.append(round(np.mean(epoch_info[1:]), 2))
         writer.writerow(log_info)
+
+
+def init_cache(args, dataset, cached_nodes):
+    device = torch.device(f"cuda:{args.device}")
+    table_size = 4 * dataset.num_nodes
+    print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
+    gpu_num_entries = (args.gpu_cache_size - table_size) // (4 * dataset.num_features)
+    gpu_cached_idx = cached_nodes[:gpu_num_entries]
+    cpu_cache_idx = cached_nodes[gpu_num_entries:]
+    gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
+    cpu_cached_feats = torch.empty(
+        (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
+    )
+    cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
+    address_table = torch.zeros((dataset.num_nodes,), dtype=torch.int32)
+    address_table[cpu_cache_idx] = (
+        torch.arange(cpu_cache_idx.numel(), dtype=torch.int32) + 1
+    )
+    address_table[gpu_cached_idx] = -(
+        torch.arange(gpu_cached_idx.numel(), dtype=torch.int32) + 1
+    )
+    address_table = address_table.to(device)
+    return cpu_cached_feats, gpu_cached_feats, address_table
 
 
 if __name__ == "__main__":
@@ -150,10 +191,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument(
-        "--dir", type=str, default="/nvme1n1/offgs_dataset", help="path to store subgraph"
+        "--dir",
+        type=str,
+        default="/nvme1n1/offgs_dataset",
+        help="path to store subgraph",
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=1000000000, help="cache size in bytes"
+        "--cpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
+    )
+    parser.add_argument(
+        "--gpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
     )
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
@@ -161,27 +208,35 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(args)
 
+    total_cache_size = args.cpu_cache_size + args.gpu_cache_size
+
     subg_dir = f"{args.dir}/{args.dataset}-{args.batchsize}-{args.fanout}"
-    aux_dir = f"{subg_dir}/cache-size-{args.feat_cache_size}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
     process = psutil.Process(os.getpid())
     mem = process.memory_info().rss / (1024 * 1024 * 1024)
 
-    # indices = torch.load(f"{subg_dir}/meta_node_popularity.pt")
-
     dataset = OffgsDataset(dataset_dir)
     cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
-    cached_feats = torch.empty(
-        (cached_nodes.numel(), dataset.num_features), dtype=torch.float32
-    )
-    cached_feats[:] = dataset.mmap_features[cached_nodes]
-    address_table = torch.load(f"{aux_dir}/address_table.pt")
 
-    # address_table, cache = init_cache(indices, dataset.mmap_features, mmap_features.shape[0], mmap_features.shape[1], args.feat_cache_size)
+    (
+        cpu_cached_feats,
+        gpu_cached_feats,
+        address_table,
+    ) = init_cache(args, dataset, cached_nodes)
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory Occupation:", mem1 - mem, "GB")
 
-    train(args, dataset, address_table, cached_feats, subg_dir, aux_dir)
+    train(
+        args,
+        dataset,
+        address_table,
+        cpu_cached_feats,
+        gpu_cached_feats,
+        subg_dir,
+        aux_dir,
+        cached_nodes,
+    )

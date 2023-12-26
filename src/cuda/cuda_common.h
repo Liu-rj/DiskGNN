@@ -19,12 +19,12 @@
         << "CUDA: " << cudaGetErrorString(e);                \
   }
 
-#define CUDA_KERNEL_CALL(kernel, nblks, nthrs, ...)               \
-  {                                                               \
-    (kernel)<<<(nblks), (nthrs)>>>(__VA_ARGS__);                  \
-    cudaError_t e = cudaGetLastError();                           \
-    CHECK(e == cudaSuccess || e == cudaErrorCudartUnloading)      \
-        << "CUDA kernel launch error: " << cudaGetErrorString(e); \
+#define CUDA_KERNEL_CALL(kernel, nblks, nthrs, shmem, stream, ...)  \
+  {                                                                 \
+    (kernel)<<<(nblks), (nthrs), (shmem), (stream)>>>(__VA_ARGS__); \
+    cudaError_t e = cudaGetLastError();                             \
+    CHECK(e == cudaSuccess || e == cudaErrorCudartUnloading)        \
+        << "CUDA kernel launch error: " << cudaGetErrorString(e);   \
   }
 
 #endif
