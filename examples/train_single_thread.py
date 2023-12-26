@@ -75,7 +75,7 @@ def train(
                 rev_cold_idx,
             ) = torch.load(f"{aux_dir}/train-aux-meta-{i}.pt")
             if cold_nodes.numel() > 0:
-                (cold_feats,) = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
                     f"{aux_dir}/train-aux-{i}.npy",
                     cold_nodes.numel(),
                     dataset.num_features,
