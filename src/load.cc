@@ -117,9 +117,8 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
   return res;
 }
 
-std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
-                                            int64_t num_indices,
-                                            int64_t feature_dim) {
+torch::Tensor LoadFeats_Direct(const std::string& file_path,
+                               int64_t num_indices, int64_t feature_dim) {
   auto total_size = num_indices * feature_dim * sizeof(float);
 
   size_t reminder = total_size % ALIGNMENT;
@@ -141,12 +140,9 @@ std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
       torch::from_blob(read_buffer, total_size / sizeof(float), options);
   all_data = all_data.to(torch::kCUDA).view({num_indices, feature_dim});
 
-  std::vector<torch::Tensor> res;
-  res.emplace_back(all_data);
-
   free(read_buffer);
 
-  return res;
+  return all_data;
 }
 
 torch::Tensor LoadTensor(const std::string& file_path) {
