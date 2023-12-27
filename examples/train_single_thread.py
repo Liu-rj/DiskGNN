@@ -104,6 +104,7 @@ def train(
                 hot_nodes,
                 address_table,
             )
+            torch.cuda.synchronize()
             info_recorder[2] += time.time() - tic  # assemble
 
             tic = time.time()
@@ -148,6 +149,8 @@ def train(
             args.batchsize,
             args.cpu_cache_size,
             args.gpu_cache_size,
+            round(args.cpu_cache_ratio, 2),
+            round(args.gpu_cache_ratio, 2),
             args.model,
             args.num_epoch,
         ]
@@ -160,7 +163,8 @@ def init_cache(args, dataset, cached_nodes):
     device = torch.device(f"cuda:{args.device}")
     table_size = 4 * dataset.num_nodes
     print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
-    gpu_num_entries = (args.gpu_cache_size - table_size) // (4 * dataset.num_features)
+    gpu_idx_cache_size = max(0, args.gpu_cache_size - table_size)
+    gpu_num_entries = gpu_idx_cache_size // (4 * dataset.num_features)
     gpu_cached_idx = cached_nodes[:gpu_num_entries]
     cpu_cache_idx = cached_nodes[gpu_num_entries:]
     gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
@@ -226,6 +230,9 @@ if __name__ == "__main__":
         gpu_cached_feats,
         address_table,
     ) = init_cache(args, dataset, cached_nodes)
+
+    args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
+    args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory Occupation:", mem1 - mem, "GB")
