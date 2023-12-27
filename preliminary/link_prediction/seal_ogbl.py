@@ -1,8 +1,6 @@
 import argparse
 import math
 import os
-
-os.environ["DGLBACKEND"] = "pytorch"
 import random
 import sys
 import time
