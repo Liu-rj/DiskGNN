@@ -11,6 +11,9 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
 
 std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
                                             int64_t feature_dim);
+std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
+                                                int64_t feature_dim,
+                                                int64_t num_align);
 
 torch::Tensor LoadTensor(const std::string& file_path);
 }  // namespace offgs

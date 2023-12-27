@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 project(offgs CXX CUDA)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_75")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)

@@ -16,7 +16,7 @@ from queue import Queue
 import threading
 import psutil
 import csv
-
+from dgl.utils import gather_pinned_tensor_rows
 import offgs
 
 
@@ -36,12 +36,16 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_info_recorder = [[] for i in range(9)]
+    epoch_info_recorder = [[] for i in range(10)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        info_recorder = [0] * 8
+        info_recorder = [0] * 10
+        subgraph_sampler_init_time = 0
+        sampler = NeighborSampler(
+                [10, 10, 10])
+        
 
         torch.cuda.synchronize()
         start = time.time()
@@ -55,6 +59,8 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
+            if args.batchsize != 1000:
+                subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
             tic = time.time()
@@ -64,9 +70,9 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                 hot_nodes,
                 rev_hot_idx,
                 rev_cold_idx,
-            ) = torch.ops.offgs._CAPI_LoadFeats_Direct(
+            ) = torch.ops.offgs._CAPI_LoadFeats_Direct_OMP(
                 f"{aux_dir}/train-aux-{i}.npy",
-                dataset.num_features,
+                dataset.num_features,8
             )
             # cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.load(
             #     f"{aux_dir}/train-aux-{i}.pt"
@@ -76,43 +82,95 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
             tic = time.time()
             num_input = cold_nodes.numel() + hot_nodes.numel()
+            ## large overhead
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
-                pin_memory=True,
+                # pin_memory=True,
             )
+            
             x[rev_cold_idx] = cold_feats
             # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
             torch.ops.offgs._CAPI_GatherInMem(
                 x, rev_hot_idx, cached_feats, hot_nodes, address_table
             )
+            x=x.pin_memory()
             info_recorder[2] += time.time() - tic  # assemble
+            
 
-            tic = time.time()
-            blocks = [block.to(device) for block in blocks]
-            torch.cuda.synchronize()
-            info_recorder[3] += time.time() - tic  # graph transfer
-            tic = time.time()
-            x = x.to(device)
-            y = labels[output_nodes].to(device).long()
-            torch.cuda.synchronize()
-            info_recorder[4] += time.time() - tic  # feature transfer
-            info_recorder[7] += x.shape[0]  # input node num
-
-            tic = time.time()
-            pred = model(blocks, x)
-            loss = F.cross_entropy(pred, y)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            torch.cuda.synchronize()
-            info_recorder[5] += time.time() - tic
+            
+            if args.mega_batch == True:
+                tic = time.time()
+                rev_idx=subgraph.train_idx.to(device)
+                sub_train_dataloader = DataLoader(
+                        subgraph,
+                        rev_idx,
+                        sampler,
+                        device=torch.device('cuda'),
+                        batch_size=1000,
+                        shuffle=True,
+                        drop_last=False,
+                        num_workers=0,
+                        use_uva=True,
+                    )
+                torch.cuda.synchronize()
+                subgraph_sampler_init_time += time.time() - tic
+                ## may need to cal sample time here modify code!
+                sample_begin_time=time.time()
+                for it, (input_nodes, output_nodes, blocks) in enumerate(
+                    sub_train_dataloader
+                ):  
+                    output_nodes=output_nodes.cpu()
+                    torch.cuda.synchronize()
+                    info_recorder[3]+=time.time()-sample_begin_time
+                    tic = time.time()
+                    h =gather_pinned_tensor_rows(x,input_nodes)
+                    # h=x[input_nodes.cpu()].to(device)
+                    if args.dataset=='yelp':
+                        y=labels[output_nodes].to(device).long().to(torch.float64)
+                    elif args.dataset=='ogbn-papers100M':
+                        y =labels[output_nodes].to(device).long().to(torch.int64)
+                    else:
+                        y = labels[output_nodes].to(device).long()
+                    torch.cuda.synchronize()
+                    info_recorder[4] += time.time() - tic  # feature transfer
+                    info_recorder[7] += h.shape[0]  # input node num
+                    tic = time.time()
+                    y_hat = model(blocks, h)
+                    ## cal the acc
+                    loss = F.cross_entropy(y_hat, y)
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+                    torch.cuda.synchronize()
+                    info_recorder[5] += time.time() - tic
+                    sample_begin_time=time.time()
+                
+            else:
+                tic = time.time()
+                blocks = [block.to(device) for block in blocks]
+                torch.cuda.synchronize()
+                info_recorder[3] += time.time() - tic  # graph transfer
+                tic = time.time()
+                x = x.to(device)
+                y = labels[output_nodes].to(device).long()
+                torch.cuda.synchronize()
+                info_recorder[4] += time.time() - tic  # feature transfer
+                info_recorder[7] += x.shape[0]  # input node num
+                tic = time.time()
+                pred = model(blocks, x)
+                loss = F.cross_entropy(pred, y)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                torch.cuda.synchronize()
+                info_recorder[5] += time.time() - tic
 
         print(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Graph Transfer Time: {info_recorder[3]:.3f}\t"
+            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
             f"Epoch Time: {np.sum(info_recorder[:6]):.3f}\t"
@@ -123,7 +181,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(np.sum(info_recorder[:6]))
 
-    with open("logs/train_single_thread_decompose.csv", "a") as f:
+    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -142,7 +200,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
     parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
+        "--batchsize", type=int, default=5000, help="batch size for training"
     )
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
     parser.add_argument(
@@ -150,14 +208,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument(
-        "--dir", type=str, default="/nvme1n1/offgs_dataset", help="path to store subgraph"
+        "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=1000000000, help="cache size in bytes"
+        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
     )
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
     )
+    ## argument whether use mega batch sampling
+    parser.add_argument('--mega_batch', action='store_false',help='whether use mega batch sampling')
     args = parser.parse_args()
     print(args)
 
