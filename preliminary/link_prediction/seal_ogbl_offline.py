@@ -25,7 +25,7 @@ from torch.nn import (
     MaxPool1d,
     ModuleList,
 )
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 
@@ -265,9 +265,10 @@ def train(graph_path, device, batch_size, num_parts):
     # graphs, label_dict = dgl.load_graphs(graph_path + "0.bin")
     partition_id = 0
     num_batches = 2000
-    for batch in tqdm(range(len(train_loader))):
+    for batch in trange(len(train_loader), ncols=100):
         if batch % num_batches == 0:
             graphs, label_dict = dgl.load_graphs(graph_path + f"{partition_id}.bin")
+            print(f"Load samples part {partition_id}")
             partition_id = (partition_id + 1) % num_parts
             num_batches = len(graphs) // batch_size
         id = np.random.randint(0, num_batches)

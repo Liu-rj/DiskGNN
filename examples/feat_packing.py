@@ -80,10 +80,9 @@ def run(dataset, args):
         difference_time += time.time() - tic
 
         tic = time.time()
-        packed_feats = torch.ops.offgs._CAPI_GatherPReadDirect(
-            dataset.features_path, cold_nodes.cpu(), dataset.num_features
-        )
-        # packed_feats: torch.Tensor = features[cold_nodes.cpu()]
+        packed_feats: torch.Tensor = features[cold_nodes.cpu()]
+        feature_dim = packed_feats.shape[1]
+        
         # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
         # packed_feats = torch.ops.offgs._CAPI_GatherPRead(dataset.features_path, cold_nodes.cpu(), dataset.num_features)
         feat_load_time += time.time() - tic
@@ -104,7 +103,7 @@ def run(dataset, args):
         save_time += time.time() - tic
 
     total_time = time.time() - start
-    with open("logs/pack_decompose.csv", "a") as f:
+    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -139,16 +138,16 @@ if __name__ == "__main__":
         help="which dataset to load for training",
     )
     parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
+        "--batchsize", type=int, default=5000, help="batch size for training"
     )
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
     )
     parser.add_argument(
-        "--store-path", default="/nvme1n1/offgs_dataset", help="path to store subgraph"
+        "--store-path", default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=1000000000, help="cache size in bytes"
+        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
     )
     args = parser.parse_args()
     print(args)

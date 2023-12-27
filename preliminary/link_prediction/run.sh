@@ -14,19 +14,19 @@
 #     --hidden_channels 256 \
 #     --use_valedges_as_input
 
-# python seal_ogbl_offline.py \
-#     --dataset ogbl-collab \
-#     --train_percent 15 \
-#     --hidden_channels 256 \
-#     --use_valedges_as_input \
-#     --num_parts 6
+python seal_ogbl_offline.py \
+    --dataset ogbl-collab \
+    --train_percent 15 \
+    --hidden_channels 256 \
+    --use_valedges_as_input \
+    --num_parts 6
 
-# python seal_ogbl_offline.py \
-#     --dataset ogbl-collab \
-#     --train_percent 15 \
-#     --hidden_channels 256 \
-#     --use_valedges_as_input \
-#     --num_parts 1
+python seal_ogbl_offline.py \
+    --dataset ogbl-collab \
+    --train_percent 15 \
+    --hidden_channels 256 \
+    --use_valedges_as_input \
+    --num_parts 1
 
 # ogbl-ddi
 # python seal_ogbl.py \

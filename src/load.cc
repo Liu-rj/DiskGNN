@@ -99,8 +99,15 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
       torch::from_blob(read_buffer, data_size / sizeof(float), options);
-  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64).cumsum(0);
+  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64);
+  // avoid overflow of size[0]
+  sizes[0] = sizes[0] * sizes[1];
+  sizes = sizes.cumsum(0);
   auto sizes_ptr = sizes.data_ptr<int64_t>();
+  // print all of sizes
+  // for (int i = 0; i < 5; i++) {
+  //   printf("%d\n", sizes_ptr[i]);
+  // }
 
   std::vector<torch::Tensor> res;
   res.push_back(all_data.slice(0, 5, sizes_ptr[0] + 5)
@@ -138,7 +145,7 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
       torch::from_blob(read_buffer, total_size / sizeof(float), options);
-  all_data = all_data.to(torch::kCUDA).view({num_indices, feature_dim});
+  all_data = all_data.pin_memory().view({num_indices, feature_dim});
 
   free(read_buffer);
 
