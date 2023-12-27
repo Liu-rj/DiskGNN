@@ -16,7 +16,7 @@ from queue import Queue
 import threading
 import psutil
 import csv
-from dgl.utils import gather_pinned_tensor_rows
+from dgl.utils import gather_pinned_tensor_rowsfrom dgl.utils import gather_pinned_tensor_rows
 import offgs
 
 
@@ -37,10 +37,16 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
     epoch_info_recorder = [[] for i in range(10)]
+    epoch_info_recorder = [[] for i in range(10)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
+        info_recorder = [0] * 10
+        subgraph_sampler_init_time = 0
+        sampler = NeighborSampler(
+                [10, 10, 10])
+        
         info_recorder = [0] * 10
         subgraph_sampler_init_time = 0
         sampler = NeighborSampler(
@@ -61,6 +67,8 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             if args.batchsize != 1000:
                 subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
+            if args.batchsize != 1000:
+                subgraph=torch.load(f"{subg_dir}/subgraph_{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             new_labels=gather_pinned_tensor_rows(labels,subgraph.train_idx)
             info_recorder[0] += time.time() - tic  # graph load
@@ -71,7 +79,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
                 hot_nodes,
                 rev_hot_idx,
                 rev_cold_idx,
-            ) = torch.ops.offgs._CAPI_LoadFeats_Direct(
+            ) = torch.ops.offgs._CAPI_LoadFeats_Direct_OMP(
                 f"{aux_dir}/train-aux-{i}.npy",
                 dataset.num_features)
             # cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.load(
@@ -83,17 +91,21 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             tic = time.time()
             num_input = cold_nodes.numel() + hot_nodes.numel()
             ## large overhead
+            ## large overhead
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
                 # pin_memory=True,
+                # pin_memory=True,
             )
+            
             
             x[rev_cold_idx] = cold_feats
             # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
             torch.ops.offgs._CAPI_GatherInMem(
                 x, rev_hot_idx, cached_feats, hot_nodes, address_table
             )
+            x=x.pin_memory()
             x=x.pin_memory()
             info_recorder[2] += time.time() - tic  # assemble
             
@@ -183,6 +195,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
         epoch_info_recorder[-1].append(np.sum(info_recorder[:7]))
 
     with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
+    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -210,13 +223,17 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="SAGE", help="training model")
     parser.add_argument(
         "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
+        "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
+        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
         "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
     )
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
     )
+    ## argument whether use mega batch sampling
+    parser.add_argument('--mega_batch', action='store_false',help='whether use mega batch sampling')
     ## argument whether use mega batch sampling
     parser.add_argument('--mega_batch', action='store_false',help='whether use mega batch sampling')
     args = parser.parse_args()

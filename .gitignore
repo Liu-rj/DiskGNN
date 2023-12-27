@@ -5,7 +5,7 @@ models
 temp
 imgs
 logs
-results
+dataset
 
 build
 dist
