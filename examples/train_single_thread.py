@@ -45,13 +45,12 @@ def train(
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_info_recorder = [[] for i in range(11)]
+    epoch_info_recorder = [[] for i in range(10)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        info_recorder = [0] * 10
-        subgraph_sampler_init_time = 0
+        info_recorder = [0] * 9
         sampler = NeighborSampler([10, 10, 10])
 
         torch.cuda.synchronize()
@@ -86,7 +85,7 @@ def train(
                     dataset.num_features,
                 )
             info_recorder[1] += time.time() - tic  # feature load
-            info_recorder[6] += cold_nodes.numel()  # cold_feats_num
+            info_recorder[7] += cold_nodes.numel()  # cold_feats_num
 
             if args.mega_batch == True:
                 tic = time.time()
@@ -121,7 +120,7 @@ def train(
                     use_uva=True,
                 )
                 torch.cuda.synchronize()
-                subgraph_sampler_init_time += time.time() - tic
+                info_recorder[6] += time.time() - tic  # sample init time
                 ## may need to cal sample time here modify code!
                 sample_begin_time = time.time()
 
@@ -154,7 +153,7 @@ def train(
                     )
                     torch.cuda.synchronize()
                     info_recorder[2] += time.time() - tic  # feat assemble
-                    info_recorder[7] += x.shape[0]  # input node num
+                    info_recorder[8] += x.shape[0]  # input node num
 
                     tic = time.time()
                     y_hat = model(blocks, x)
@@ -187,7 +186,7 @@ def train(
                 )
                 torch.cuda.synchronize()
                 info_recorder[2] += time.time() - tic  # feat assemble
-                info_recorder[7] += x.shape[0]  # input node num
+                info_recorder[8] += x.shape[0]  # input node num
 
                 tic = time.time()
                 blocks = [block.to(device) for block in blocks]
@@ -211,13 +210,14 @@ def train(
             f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
-            f"Epoch Time: {np.sum(info_recorder[:6]):.3f}\t"
-            f"Cold Feats Num: {info_recorder[6]}\t"
-            f"Feature Transfer Num: {info_recorder[7]}\t"
+            f"Sample init time: {info_recorder[6]:.3f}\t"
+            f"Epoch Time: {np.sum(info_recorder[:7]):.3f}\t"
+            f"Cold Feats Num: {info_recorder[7]}\t"
+            f"Block Input Node Num: {info_recorder[8]}\t"
         )
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
-        epoch_info_recorder[-1].append(np.sum(info_recorder[:6]))
+        epoch_info_recorder[-1].append(np.sum(info_recorder[:7]))
 
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
