@@ -71,7 +71,7 @@ def run(args, dataset, label_offset):
     torch.save(sorted_idx, f"{output_dir}/meta_node_popularity.pt")
     save_rank += time.time() - tic
 
-    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
+    with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -108,6 +108,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--store-path", default="/nvme2n1", help="path to store subgraph"
+    )
+    parser.add_argument(
+        "--log", type=str, default="logs/sample_decompose.csv", help="log file"
     )
     args = parser.parse_args()
     print(args)

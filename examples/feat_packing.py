@@ -82,7 +82,7 @@ def run(dataset, args):
         tic = time.time()
         packed_feats: torch.Tensor = features[cold_nodes.cpu()]
         feature_dim = packed_feats.shape[1]
-        
+
         # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
         # packed_feats = torch.ops.offgs._CAPI_GatherPRead(dataset.features_path, cold_nodes.cpu(), dataset.num_features)
         feat_load_time += time.time() - tic
@@ -103,7 +103,7 @@ def run(dataset, args):
         save_time += time.time() - tic
 
     total_time = time.time() - start
-    with open("/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a") as f:
+    with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -148,6 +148,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
+    )
+    parser.add_argument(
+        "--log", type=str, default="logs/pack_decompose.csv", help="log file"
     )
     args = parser.parse_args()
     print(args)

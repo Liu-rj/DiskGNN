@@ -28,7 +28,6 @@ def train(
     gpu_cached_feats: torch.Tensor,
     subg_dir: str,
     aux_dir: str,
-    cached_nodes: torch.Tensor,
 ):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
@@ -46,7 +45,7 @@ def train(
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_info_recorder = [[] for i in range(10)]
+    epoch_info_recorder = [[] for i in range(11)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
@@ -66,10 +65,12 @@ def train(
             # clear_cache += time.time() - tic
 
             tic = time.time()
-            blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             if args.mega_batch == True:
                 subgraph = torch.load(f"{subg_dir}/subgraph_{i}.pt")
+            else:
+                blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
+            input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
             tic = time.time()
             (
@@ -89,6 +90,24 @@ def train(
 
             if args.mega_batch == True:
                 tic = time.time()
+                global_nid = input_nodes.to(device)
+                cold_idx_map = torch.tensor([])
+                if cold_nodes.numel() > 0:
+                    cold_idx_map = torch.full(
+                        (subgraph.num_nodes(),),
+                        -1,
+                        dtype=torch.int32,
+                        device=device,
+                    )
+                    cold_idx_map[rev_cold_idx] = torch.arange(
+                        cold_nodes.numel(),
+                        dtype=torch.int32,
+                        device=device,
+                    )
+                torch.cuda.synchronize()
+                info_recorder[2] += time.time() - tic  # feat assemble
+
+                tic = time.time()
                 rev_idx = subgraph.train_idx.to(device)
                 sub_train_dataloader = DataLoader(
                     subgraph,
@@ -105,22 +124,40 @@ def train(
                 subgraph_sampler_init_time += time.time() - tic
                 ## may need to cal sample time here modify code!
                 sample_begin_time = time.time()
+
                 for it, (input_nodes, output_nodes, blocks) in enumerate(
                     sub_train_dataloader
                 ):
+                    y = gather_pinned_tensor_rows(
+                        labels,
+                        global_nid[output_nodes],
+                    ).long()
                     torch.cuda.synchronize()
+                    # sample, graph and label transfer
                     info_recorder[3] += time.time() - sample_begin_time
 
                     tic = time.time()
-                    h = gather_pinned_tensor_rows(x, input_nodes)
-                    # h=x[input_nodes.cpu()].to(device)
-                    y = gather_pinned_tensor_rows(labels, output_nodes).long()
+                    x = torch.empty(
+                        (input_nodes.numel(), dataset.num_features),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    torch.ops.offgs._CAPI_GatherInGPU_MegaBatch(
+                        x,
+                        input_nodes,
+                        global_nid,
+                        cpu_cached_feats,
+                        gpu_cached_feats,
+                        cold_feats,
+                        address_table,
+                        cold_idx_map,
+                    )
                     torch.cuda.synchronize()
-                    info_recorder[4] += time.time() - tic  # feature transfer
-                    info_recorder[7] += h.shape[0]  # input node num
+                    info_recorder[2] += time.time() - tic  # feat assemble
+                    info_recorder[7] += x.shape[0]  # input node num
 
                     tic = time.time()
-                    y_hat = model(blocks, h)
+                    y_hat = model(blocks, x)
                     ## cal the acc
                     loss = F.cross_entropy(y_hat, y)
                     opt.zero_grad()
@@ -149,17 +186,14 @@ def train(
                     address_table,
                 )
                 torch.cuda.synchronize()
-                info_recorder[2] += time.time() - tic  # assemble
+                info_recorder[2] += time.time() - tic  # feat assemble
+                info_recorder[7] += x.shape[0]  # input node num
 
                 tic = time.time()
                 blocks = [block.to(device) for block in blocks]
-                torch.cuda.synchronize()
-                info_recorder[3] += time.time() - tic  # graph transfer
-                tic = time.time()
                 y = labels[output_nodes].to(device).long()
                 torch.cuda.synchronize()
-                info_recorder[4] += time.time() - tic  # feature transfer
-                info_recorder[7] += x.shape[0]  # input node num
+                info_recorder[3] += time.time() - tic  # graph & label transfer
 
                 tic = time.time()
                 pred = model(blocks, x)
@@ -173,7 +207,7 @@ def train(
         print(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
-            f"Assemble Time: {info_recorder[2]:.3f}\t"
+            f"Feat Assemble Time: {info_recorder[2]:.3f}\t"
             f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
@@ -185,9 +219,7 @@ def train(
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(np.sum(info_recorder[:6]))
 
-    with open(
-        "/home/ubuntu/OfflineSampling/examples/logs/train_decompose.csv", "a"
-    ) as f:
+    with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -229,39 +261,7 @@ def init_cache(args, dataset, cached_nodes):
     return cpu_cached_feats, gpu_cached_feats, address_table
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=int, default=0, help="Training model device")
-    parser.add_argument(
-        "--batchsize", type=int, default=5000, help="batch size for training"
-    )
-    parser.add_argument("--dataset", default="ogbn-products", help="dataset")
-    parser.add_argument(
-        "--fanout", type=str, default="10,10,10", help="sampling fanout"
-    )
-    parser.add_argument("--model", type=str, default="SAGE", help="training model")
-    parser.add_argument(
-        "--dir",
-        type=str,
-        default="/nvme1n1/offgs_dataset",
-        help="path to store subgraph",
-    )
-    parser.add_argument(
-        "--cpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
-    )
-    parser.add_argument(
-        "--gpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
-    )
-    parser.add_argument(
-        "--num-epoch", type=int, default=3, help="numbers of epoch in training"
-    )
-    ## argument whether use mega batch sampling
-    parser.add_argument(
-        "--mega_batch", action="store_false", help="whether use mega batch sampling"
-    )
-    args = parser.parse_args()
-    print(args)
-
+def start(args):
     total_cache_size = args.cpu_cache_size + args.gpu_cache_size
 
     subg_dir = f"{args.dir}/{args.dataset}-{args.batchsize}-{args.fanout}"
@@ -295,5 +295,46 @@ if __name__ == "__main__":
         gpu_cached_feats,
         subg_dir,
         aux_dir,
-        cached_nodes,
     )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=int, default=0, help="Training model device")
+    parser.add_argument(
+        "--batchsize", type=int, default=5000, help="batch size for training"
+    )
+    parser.add_argument("--dataset", default="ogbn-products", help="dataset")
+    parser.add_argument(
+        "--fanout", type=str, default="10,10,10", help="sampling fanout"
+    )
+    parser.add_argument("--model", type=str, default="SAGE", help="training model")
+    parser.add_argument(
+        "--dir",
+        type=str,
+        default="/nvme1n1/offgs_dataset",
+        help="path to store subgraph",
+    )
+    parser.add_argument(
+        "--cpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
+    )
+    parser.add_argument(
+        "--gpu-cache-size", type=int, default=1000000000, help="cache size in bytes"
+    )
+    parser.add_argument(
+        "--num-epoch", type=int, default=3, help="numbers of epoch in training"
+    )
+    ## argument whether use mega batch sampling
+    parser.add_argument(
+        "--mega_batch", action="store_true", help="whether use mega batch sampling"
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="logs/train_single_thread_decompose.csv",
+        help="log file",
+    )
+    args = parser.parse_args()
+    print(args)
+
+    start(args)
