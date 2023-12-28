@@ -62,10 +62,10 @@ def run(args, dataset, label_offset):
         subgraph = dgl.edge_subgraph(g, eids.cpu(), relabel_nodes=True)
         rev_idx = find_indices_in(output_nodes.cpu().numpy(), subgraph.ndata[dgl.NID].numpy())
         rev_idx = torch.from_numpy(rev_idx).to('cuda')
-        subgraph.ndata.clear()
+        # subgraph.ndata.clear()
         subgraph.edata.clear()
-        subgraph.srcdata.clear()
-        subgraph.dstdata.clear()
+        # subgraph.srcdata.clear()
+        # subgraph.dstdata.clear()
         subgraph.train_idx=rev_idx
         for it, block in enumerate(blocks):
             block.ndata.clear()
@@ -92,7 +92,7 @@ def run(args, dataset, label_offset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="friendster", help="which dataset to load for training")
+    parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=5000, help="batch size for training")
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
