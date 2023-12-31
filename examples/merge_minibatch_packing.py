@@ -16,7 +16,7 @@ import offgs
 
 
 def run(dataset, args):
-    output_dir = f"{args.store_path}/{args.dataset}-{args.batchsize}-{args.fanout}"
+    output_dir = f"{args.store_path}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
     aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
 
     if not os.path.exists(aux_dir):
@@ -53,14 +53,19 @@ def run(dataset, args):
     torch.save(address_table, f"{aux_dir}/address_table.pt")
     key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to("cuda"))
     cache_init_time = time.time() - tic
+    number_of_batch_merge_into_one = args.mega_batch_size // args.batchsize
     total_cold_nodes = 0
+    
 
     for i in trange(num_batches):
         # tic = time.time()
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
         #     stream.write("1\n")
         # clear_cache_time += time.time() - tic
-
+        
+        ## cope with the tail minibatch and the minibatch that is not merged
+        if (not (i+1) % number_of_batch_merge_into_one == 0) and (not (i+number_of_batch_merge_into_one>=((num_batches + number_of_batch_merge_into_one - 1) // number_of_batch_merge_into_one) * number_of_batch_merge_into_one)):
+            continue
         tic = time.time()
         input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to("cuda")
         nid_load_time += time.time() - tic
@@ -125,12 +130,13 @@ def run(dataset, args):
         save_time += time.time() - tic
 
     total_time = time.time() - start
-    with open("/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv", "a") as f:
+    with open("/home/ubuntu/OfflineSampling/examples/logs/merge_mini_pack_decompose.csv", "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
             args.fanout,
             args.batchsize,
+            args.mega_batch_size,
             args.feat_cache_size,
             total_cold_nodes,
             round(cache_init_time, 2),
@@ -157,12 +163,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="ogbn-products",
+        default="friendster",
         help="which dataset to load for training",
     )
     parser.add_argument(
         "--batchsize", type=int, default=1024, help="batch size for training"
     )
+    parser.add_argument("--mega_batch_size", type=int, default=10240, help="mega batch size for training")
+    
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
     )
@@ -170,7 +178,7 @@ if __name__ == "__main__":
         "--store-path", default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
+        "--feat-cache-size", type=int, default=6400000000, help="cache size in bytes"
     )
     args = parser.parse_args()
     print(args)
