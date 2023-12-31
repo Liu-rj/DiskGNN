@@ -86,7 +86,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
-                # pin_memory=True,
+                pin_memory=True,
             )
             
             
@@ -95,7 +95,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             torch.ops.offgs._CAPI_GatherInMem(
                 x, rev_hot_idx, cached_feats, hot_nodes, address_table
             )
-            x=x.pin_memory()
+            # x=x.pin_memory()
             info_recorder[2] += time.time() - tic  # assemble
             
 
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
     parser.add_argument(
-        "--batchsize", type=int, default=5000, help="batch size for training"
+        "--batchsize", type=int, default=1024, help="batch size for training"
     )
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
     parser.add_argument(
@@ -212,7 +212,7 @@ if __name__ == "__main__":
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
     )
     ## argument whether use mega batch sampling
-    parser.add_argument('--mega_batch', action='store_false',help='whether use mega batch sampling')
+    parser.add_argument('--mega_batch', action='store_true',help='whether use mega batch sampling')
     args = parser.parse_args()
     print(args)
 

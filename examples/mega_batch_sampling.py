@@ -75,7 +75,8 @@ def run(args, dataset, label_offset):
             blocks[it] = block
         torch.save(subgraph, f"{output_dir}/subgraph_{i}.pt")
         torch.save(blocks, f"{output_dir}/train-{i}.pt")
-        torch.save(input_nodes, f"{output_dir}/in-nid-{i}.pt")
+        ## TODO use subgraph.ndata[dgl.NID] instead and test here to see if the result is the same
+        torch.save(subgraph.ndata[dgl.NID], f"{output_dir}/in-nid-{i}.pt")
         torch.save(output_nodes, f"{output_dir}/out-nid-{i}.pt")
         node_counts[input_nodes.cuda()] += 1
     sampling_time = time.time() - start
