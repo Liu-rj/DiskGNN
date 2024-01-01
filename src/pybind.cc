@@ -8,7 +8,6 @@
 #include "load.h"
 
 namespace offgs {
-
 TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_GatherMemMap", &GatherMemMap);
   m.def("_CAPI_GatherPRead", &GatherPRead);
@@ -16,6 +15,7 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_GatherInMem", &GatherInMem);
   m.def("_CAPI_GatherInGPU", &cuda::GatherInGPU);
   m.def("_CAPI_GatherInGPU_MegaBatch", &cuda::GatherInGPU_MegaBatch);
+  m.def("_CAPI_GatherInGPU_MergeMiniBatch", &cuda::GatherInGPU_MergeMiniBatch);
   m.def("_CAPI_BuildHashMap", &cuda::BuildHashMap);
   m.def("_CAPI_QueryHashMap", &cuda::QueryHashMap);
   m.def("_CAPI_Difference", &cuda::Difference);

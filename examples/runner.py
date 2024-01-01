@@ -1,5 +1,6 @@
 import argparse
-from train_single_thread import start
+from train_single_thread import start as start_mini_batch
+from merge_minibatch_train_single_thread import start as start_merge_mini_batch
 
 
 def get_predefined_args():
@@ -36,11 +37,15 @@ def get_predefined_args():
         "--mega_batch", action="store_true", help="whether use mega batch sampling"
     )
     parser.add_argument(
+        "--mega_batch_size", type=int, default=4096, help="mega batch size for training"
+    )
+    parser.add_argument(
         "--log",
         type=str,
         default="logs/train_single_thread_decompose.csv",
         help="log file",
     )
+    parser.add_argument("--debug", action="store_true", help="debug mode")
     args = parser.parse_args()
     print(args)
     return args
@@ -84,4 +89,4 @@ if __name__ == "__main__":
         for key, value in inputs.items():
             setattr(args, key, value)
         print(args)
-        start(args)
+        start_mini_batch(args)

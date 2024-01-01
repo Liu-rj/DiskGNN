@@ -20,11 +20,20 @@ from dgl.utils import gather_pinned_tensor_rows
 import offgs
 
 
-def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, aux_dir):
+def train(
+    args,
+    dataset: OffgsDataset,
+    address_table: torch.Tensor,
+    cpu_cached_feats: torch.Tensor,
+    gpu_cached_feats: torch.Tensor,
+    subg_dir: str,
+    aux_dir: str,
+):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
 
     labels = dataset.labels.pin_memory()
+    cpu_cached_feats = cpu_cached_feats.pin_memory()
 
     if args.model == "SAGE":
         model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(
@@ -36,8 +45,9 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_info_recorder = [[] for i in range(9)]
-    number_of_batch_merge_into_one = args.mega_batch_size // args.batchsize
+    epoch_info_recorder = [[] for i in range(10)]
+    num_megabatch = args.mega_batch_size // args.batchsize
+    last = size - size % num_megabatch
 
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -45,9 +55,8 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
         info_recorder = [0] * 9
         torch.cuda.synchronize()
-        first_greater_multiple_index=((size + number_of_batch_merge_into_one - 1) // number_of_batch_merge_into_one) * number_of_batch_merge_into_one
         model.train()
-        for i in trange(size):
+        for i in trange(size, ncols=100):
             # tic = time.time()
             # with open("/proc/sys/vm/drop_caches", "w") as stream:
             #     stream.write("1\n")
@@ -55,75 +64,95 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
+            input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
-            if i % number_of_batch_merge_into_one == 0 and (i+number_of_batch_merge_into_one<first_greater_multiple_index):
-                unique_nodes_mapping=torch.load(f"{subg_dir}/unique_nodes_mapping-{i+number_of_batch_merge_into_one-1}.pt")
-                train_aux_id_to_load=i+number_of_batch_merge_into_one-1
-
-            
             info_recorder[0] += time.time() - tic  # graph load
-            if (i+number_of_batch_merge_into_one>=first_greater_multiple_index):
-                train_aux_id_to_load=i
-            if i % number_of_batch_merge_into_one == 0 or (i+number_of_batch_merge_into_one>=first_greater_multiple_index):
+
+            if (i + num_megabatch) % num_megabatch == 0 or i == last:
+                load_id = min(i + num_megabatch - 1, size - 1)
+                unique_inv_idx = torch.load(f"{subg_dir}/unique_inv_idx-{load_id}.pt")
+
                 tic = time.time()
-                
                 (
-                    cold_feats,
                     cold_nodes,
                     hot_nodes,
                     rev_hot_idx,
                     rev_cold_idx,
-                ) = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                    f"{aux_dir}/train-aux-{train_aux_id_to_load}.npy",
-                    dataset.num_features)
-                # cold_feats, cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx = torch.load(
-                #     f"{aux_dir}/train-aux-{i}.pt"
-                # )
+                ) = torch.load(f"{aux_dir}/train-aux-meta-{load_id}.pt")
+                if cold_nodes.numel() > 0:
+                    cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                        f"{aux_dir}/train-aux-{load_id}.npy",
+                        cold_nodes.numel(),
+                        dataset.num_features,
+                    )
                 info_recorder[1] += time.time() - tic  # feature load
-                info_recorder[7] += cold_feats.shape[0]  # cold_feats_num
+                info_recorder[7] += cold_nodes.numel()  # cold_feats_num
 
                 tic = time.time()
                 num_input = cold_nodes.numel() + hot_nodes.numel()
-                ## large overhead
-                x = torch.empty(
-                    (num_input, dataset.num_features),
-                    dtype=torch.float32,
-                    pin_memory=True,
-                )
-                
-                
-                x[rev_cold_idx] = cold_feats
-                # x[rev_hot_idx] = cached_feats[address_table[hot_nodes]]
-                torch.ops.offgs._CAPI_GatherInMem(
-                    x, rev_hot_idx, cached_feats, hot_nodes, address_table
-                )
-                info_recorder[2] += time.time() - tic  # assemble
-            
+                cold_idx_map = torch.tensor([])
+                if cold_nodes.numel() > 0:
+                    cold_idx_map = torch.full(
+                        (num_input,),
+                        -1,
+                        dtype=torch.int32,
+                        device=device,
+                    )
+                    cold_idx_map[rev_cold_idx] = torch.arange(
+                        cold_nodes.numel(),
+                        dtype=torch.int32,
+                        device=device,
+                    )
+                torch.cuda.synchronize()
+                info_recorder[2] += time.time() - tic  # feat assemble
 
-            
             tic = time.time()
-            if (i+number_of_batch_merge_into_one>=first_greater_multiple_index):
-                x_in_mini_batch=x
-                # x_in_mini_batch=x_in_mini_batch.pin_memory()
-            else:
-                x_in_mini_batch=torch.empty(
-                    (unique_nodes_mapping[i%number_of_batch_merge_into_one].shape[0], dataset.num_features),
-                    dtype=torch.float32,
-                    pin_memory=True,
-                )
-                torch.index_select(x,0,unique_nodes_mapping[i%number_of_batch_merge_into_one],out=x_in_mini_batch)
-                
-            blocks = [block.to(device) for block in blocks]
+            minibatch_inv_idx = unique_inv_idx[i % num_megabatch].to(device)
+            x = torch.empty(
+                (input_nodes.numel(), dataset.num_features),
+                dtype=torch.float32,
+                device=device,
+            )
+            torch.ops.offgs._CAPI_GatherInGPU_MergeMiniBatch(
+                x,
+                input_nodes.to(device),
+                minibatch_inv_idx,
+                cpu_cached_feats,
+                gpu_cached_feats,
+                cold_feats,
+                address_table,
+                cold_idx_map,
+            )
             torch.cuda.synchronize()
-            info_recorder[3] += time.time() - tic  # graph transfer
+            info_recorder[2] += time.time() - tic  # feat assemble
+            info_recorder[8] += x.shape[0]  # input node num
+
+            if args.debug:
+                input_nodes = input_nodes.to(device)
+                cold_idx = cold_idx_map[
+                    minibatch_inv_idx[address_table[input_nodes] == 0]
+                ]
+                minibatch_cold_feats = gather_pinned_tensor_rows(cold_feats, cold_idx)
+                x[address_table[input_nodes] == 0] = minibatch_cold_feats
+                cpu_hot_idx = (
+                    address_table[input_nodes[address_table[input_nodes] > 0]] - 1
+                )
+                cpu_hot_feats = gather_pinned_tensor_rows(cpu_cached_feats, cpu_hot_idx)
+                x[address_table[input_nodes] > 0] = cpu_hot_feats
+                gpu_hot_idx = (
+                    -address_table[input_nodes[address_table[input_nodes] < 0]] - 1
+                )
+                gpu_hot_feats = gpu_cached_feats[gpu_hot_idx]
+                x[address_table[input_nodes] < 0] = gpu_hot_feats
+                torch.cuda.synchronize()
+
             tic = time.time()
-            x_in_mini_batch = x_in_mini_batch.to(device)
+            blocks = [block.to(device) for block in blocks]
             y = labels[output_nodes].to(device).long()
             torch.cuda.synchronize()
-            info_recorder[4] += time.time() - tic  # feature transfer
-            info_recorder[8] += x_in_mini_batch.shape[0]  # input node num
+            info_recorder[3] += time.time() - tic  # graph & label transfer
             tic = time.time()
-            pred = model(blocks, x_in_mini_batch)
+            pred = model(blocks, x)
             loss = F.cross_entropy(pred, y)
             opt.zero_grad()
             loss.backward()
@@ -135,10 +164,10 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Graph Transfer Time : {info_recorder[3]:.3f}\t"
+            f"Graph & Label Transfer Time : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
-            f'Sample init time: {info_recorder[6]:.3f}\t'
+            f"Sample init time: {info_recorder[6]:.3f}\t"
             f"Epoch Time: {np.sum(info_recorder[:7]):.3f}\t"
             f"Cold Feats Num: {info_recorder[7]}\t"
             f"Feature Transfer Num: {info_recorder[8]}\t"
@@ -146,8 +175,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(np.sum(info_recorder[:7]))
-    ## [TODO] fix report
-    with open("/home/ubuntu/OfflineSampling/examples/logs/merge_mini_train_decompose.csv", "a") as f:
+    with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -163,14 +191,76 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
         writer.writerow(log_info)
 
 
+def init_cache(args, dataset, cached_nodes):
+    device = torch.device(f"cuda:{args.device}")
+    table_size = 4 * dataset.num_nodes
+    print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
+    gpu_idx_cache_size = max(0, args.gpu_cache_size - table_size)
+    gpu_num_entries = gpu_idx_cache_size // (4 * dataset.num_features)
+    gpu_cached_idx = cached_nodes[:gpu_num_entries]
+    cpu_cache_idx = cached_nodes[gpu_num_entries:]
+    gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
+    cpu_cached_feats = torch.empty(
+        (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
+    )
+    cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
+    address_table = torch.zeros((dataset.num_nodes,), dtype=torch.int32)
+    address_table[cpu_cache_idx] = (
+        torch.arange(cpu_cache_idx.numel(), dtype=torch.int32) + 1
+    )
+    address_table[gpu_cached_idx] = -(
+        torch.arange(gpu_cached_idx.numel(), dtype=torch.int32) + 1
+    )
+    address_table = address_table.to(device)
+    return cpu_cached_feats, gpu_cached_feats, address_table
+
+
+def start(args):
+    total_cache_size = args.cpu_cache_size + args.gpu_cache_size
+
+    subg_dir = f"{args.dir}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size}"
+    dataset_dir = f"{args.dir}/{args.dataset}-offgs"
+
+    # --- load data --- #
+    process = psutil.Process(os.getpid())
+    mem = process.memory_info().rss / (1024 * 1024 * 1024)
+
+    dataset = OffgsDataset(dataset_dir)
+    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+
+    (
+        cpu_cached_feats,
+        gpu_cached_feats,
+        address_table,
+    ) = init_cache(args, dataset, cached_nodes)
+
+    args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
+    args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
+
+    mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
+    print("Memory Occupation:", mem1 - mem, "GB")
+
+    train(
+        args,
+        dataset,
+        address_table,
+        cpu_cached_feats,
+        gpu_cached_feats,
+        subg_dir,
+        aux_dir,
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
     parser.add_argument(
         "--batchsize", type=int, default=1024, help="batch size for training"
     )
-    parser.add_argument("--mega_batch_size", type=int, default=4096, help="mega batch size for training")
-
+    parser.add_argument(
+        "--mega_batch_size", type=int, default=4096, help="mega batch size for training"
+    )
     parser.add_argument("--dataset", default="friendster", help="dataset")
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
@@ -185,32 +275,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"
     )
-    ## argument whether use mega batch sampling
-    parser.add_argument('--mega_batch', action='store_true',help='whether use mega batch sampling')
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="logs/merge_minibatch_train_single_thread_decompose.csv",
+        help="log file",
+    )
+    parser.add_argument("--debug", action="store_true", help="debug mode")
     args = parser.parse_args()
     print(args)
 
-    subg_dir = f"{args.dir}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
-    aux_dir = f"{subg_dir}/cache-size-{args.feat_cache_size}"
-    dataset_dir = f"{args.dir}/{args.dataset}-offgs"
-
-    # --- load data --- #
-    process = psutil.Process(os.getpid())
-    mem = process.memory_info().rss / (1024 * 1024 * 1024)
-
-    # indices = torch.load(f"{subg_dir}/meta_node_popularity.pt")
-
-    dataset = OffgsDataset(dataset_dir)
-    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
-    cached_feats = torch.empty(
-        (cached_nodes.numel(), dataset.num_features), dtype=torch.float32
-    )
-    cached_feats[:] = dataset.mmap_features[cached_nodes]
-    address_table = torch.load(f"{aux_dir}/address_table.pt")
-
-    # address_table, cache = init_cache(indices, dataset.mmap_features, mmap_features.shape[0], mmap_features.shape[1], args.feat_cache_size)
-
-    mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
-    print("Memory Occupation:", mem1 - mem, "GB")
-
-    train(args, dataset, address_table, cached_feats, subg_dir, aux_dir)
+    start(args)

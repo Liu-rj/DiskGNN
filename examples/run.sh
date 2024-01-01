@@ -91,26 +91,32 @@
 # sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=19200000000
 
 
+# log_dir=logs/merge_minibatch_train_single_thread_decompose.csv
 # datasets=(ogbn-products ogbn-papers100M friendster)
 # batchsizes=(2048 4096 8192)
 # cachesizes_2=(200000000 10000000000 6400000000)
 # cachesizes_6=(600000000 32000000000 19200000000)
 
-datasets=(ogbn-products)
-batchsizes=(2048)
-cachesizes_2=(200000000)
-cachesizes_6=(600000000)
+datasets=(ogbn-papers100M friendster)
+batchsizes=(10240)
+cachesizes_2=(10000000000 6400000000)
+cachesizes_6=(32000000000 19200000000)
+
+# datasets=(ogbn-products)
+# batchsizes=(10240)
+# cachesizes_2=(200000000)
+# cachesizes_6=(600000000)
 
 for i in ${!datasets[@]}
 do
 for batchsize in ${batchsizes[@]}
 do
-# sudo env PATH=$PATH python mega_batch_sampling.py --dataset ${datasets[$i]} --batchsize ${batchsize} --fanout "10,10,10" --store-path /nvme1n1/offgs_dataset
+# sudo env PATH=$PATH python merge_minibatch_sample.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --fanout "10,10,10" --store-path /nvme1n1/offgs_dataset
 
-# sudo env PATH=$PATH python feat_packing.py --dataset ${datasets[$i]} --batchsize ${batchsize} --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]}
-sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --batchsize ${batchsize} --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]} --mega_batch
+# sudo env PATH=$PATH python merge_minibatch_packing.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]}
+sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]}
 
-# sudo env PATH=$PATH python feat_packing.py --dataset ${datasets[$i]} --batchsize ${batchsize} --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]}
-# sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --batchsize ${batchsize} --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]} --mega_batch
+# sudo env PATH=$PATH python merge_minibatch_packing.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]}
+sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]}
 done
 done

@@ -16,6 +16,14 @@ void GatherInGPU_MegaBatch(torch::Tensor& out, const torch::Tensor& in_idx,
                            const torch::Tensor& in_cold,
                            const torch::Tensor& hot_map_table,
                            const torch::Tensor& cold_map_table);
+
+void GatherInGPU_MergeMiniBatch(torch::Tensor& out, const torch::Tensor& in_idx,
+                                const torch::Tensor& unique_inv_idx,
+                                const torch::Tensor& in_cpu,
+                                const torch::Tensor& in_gpu,
+                                const torch::Tensor& in_cold,
+                                const torch::Tensor& hot_map_table,
+                                const torch::Tensor& cold_map_table);
 }  // namespace cuda
 }  // namespace offgs
 

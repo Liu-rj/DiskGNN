@@ -83,8 +83,6 @@ def run(dataset, args):
 
         tic = time.time()
         packed_feats: torch.Tensor = features[cold_nodes.cpu()]
-        feature_dim = packed_feats.shape[1]
-
         # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
         # packed_feats = torch.ops.offgs._CAPI_GatherPRead(dataset.features_path, cold_nodes.cpu(), dataset.num_features)
         feat_load_time += time.time() - tic
