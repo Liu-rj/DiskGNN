@@ -302,7 +302,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0, help="Training model device")
     parser.add_argument(
-        "--batchsize", type=int, default=5000, help="batch size for training"
+        "--batchsize", type=int, default=1024, help="batch size for training"
     )
     parser.add_argument("--dataset", default="ogbn-products", help="dataset")
     parser.add_argument(

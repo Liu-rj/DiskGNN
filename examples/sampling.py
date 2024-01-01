@@ -101,7 +101,7 @@ if __name__ == "__main__":
         help="which dataset to load for training",
     )
     parser.add_argument(
-        "--batchsize", type=int, default=5000, help="batch size for training"
+        "--batchsize", type=int, default=1024, help="batch size for training"
     )
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
