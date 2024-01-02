@@ -53,7 +53,7 @@ def run(args, dataset, label_offset):
     batch_in_nid = []
     unique_inv_idx = []
 
-    for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader)):
+    for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader, ncols=100)):
         for it, block in enumerate(blocks):
             block.ndata.clear()
             block.edata.clear()
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log",
         type=str,
-        default="logs/sample_merge_megabatch_decompose.csv",
+        default="logs/merge_megabatch_sample_decompose.csv",
         help="log file",
     )
     args = parser.parse_args()

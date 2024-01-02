@@ -89,4 +89,7 @@ if __name__ == "__main__":
         for key, value in inputs.items():
             setattr(args, key, value)
         print(args)
-        start_mini_batch(args)
+        if args.mega_batch:
+            start_merge_mini_batch(args)
+        else:
+            start_mini_batch(args)

@@ -79,6 +79,7 @@ def train(
                     rev_hot_idx,
                     rev_cold_idx,
                 ) = torch.load(f"{aux_dir}/train-aux-meta-{load_id}.pt")
+                cold_feats = torch.tensor([], dtype=torch.float32)
                 if cold_nodes.numel() > 0:
                     cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
                         f"{aux_dir}/train-aux-{load_id}.npy",
@@ -90,7 +91,7 @@ def train(
 
                 tic = time.time()
                 num_input = cold_nodes.numel() + hot_nodes.numel()
-                cold_idx_map = torch.tensor([])
+                cold_idx_map = torch.tensor([], dtype=torch.int32, device=device)
                 if cold_nodes.numel() > 0:
                     cold_idx_map = torch.full(
                         (num_input,),
@@ -182,7 +183,10 @@ def train(
             args.fanout,
             args.batchsize,
             args.mega_batch_size,
-            args.feat_cache_size,
+            args.cpu_cache_size,
+            args.gpu_cache_size,
+            round(args.cpu_cache_ratio, 2),
+            round(args.gpu_cache_ratio, 2),
             args.model,
             args.num_epoch,
         ]

@@ -58,7 +58,7 @@ def run(dataset, args):
     num_megabatch = args.mega_batch_size // args.batchsize
     total_cold_nodes = 0
 
-    for i in trange(num_batches):
+    for i in trange(num_batches, ncols=100):
         # tic = time.time()
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
         #     stream.write("1\n")
