@@ -102,6 +102,7 @@ void GatherInMem(torch::Tensor& out, const torch::Tensor& out_idx,
   auto num_idx = in_idx.numel();
   assert(out.sizes()[1] == in.sizes()[1]);
   auto feature_dim = out.sizes()[1];
+  auto feature_size = feature_dim * sizeof(float);
 
   auto out_dataptr = out.data_ptr<float>();
   auto in_dataptr = in.data_ptr<float>();
@@ -112,7 +113,7 @@ void GatherInMem(torch::Tensor& out, const torch::Tensor& out_idx,
 #pragma omp parallel for num_threads(64)
   for (int64_t i = 0; i < num_idx; i++) {
     memcpy(out_dataptr + out_idx_ptr[i] * feature_dim,
-           in_dataptr + map_ptr[in_idx_ptr[i]] * feature_dim, feature_dim);
+           in_dataptr + map_ptr[in_idx_ptr[i]] * feature_dim, feature_size);
   }
 }
 }  // namespace offgs

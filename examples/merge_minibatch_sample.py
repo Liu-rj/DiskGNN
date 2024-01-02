@@ -17,7 +17,9 @@ import offgs
 
 def run(args, dataset, label_offset):
     fanout = [int(x) for x in args.fanout.split(",")]
-    output_dir = f"{args.store_path}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
+    output_dir = (
+        f"{args.store_path}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
+    )
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
@@ -46,13 +48,12 @@ def run(args, dataset, label_offset):
     node_counts = torch.zeros(g.num_nodes(), dtype=torch.int64, device="cuda")
     sample_time, save_block, save_rank = 0, 0, 0
     tic = time.time()
-    
-    number_of_batch_merge_into_one = args.mega_batch_size // args.batchsize
-    blocks_to_merge = []
-    blocks_input_nodes_to_merge = []
-    unique_nodes_mapping = {}
 
-    for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader)):
+    num_megabatch = args.mega_batch_size // args.batchsize
+    batch_in_nid = []
+    unique_inv_idx = []
+
+    for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader, ncols=100)):
         for it, block in enumerate(blocks):
             block.ndata.clear()
             block.edata.clear()
@@ -60,41 +61,35 @@ def run(args, dataset, label_offset):
             block.dstdata.clear()
             blocks[it] = block
         sample_time += time.time() - tic
-        blocks_to_merge.append(blocks)
-        blocks_input_nodes_to_merge.append(input_nodes)
-        ## cope with the tail minibatch
-        if i+number_of_batch_merge_into_one>=((len(train_dataloader) + number_of_batch_merge_into_one - 1) // number_of_batch_merge_into_one) * number_of_batch_merge_into_one:
-            torch.save(input_nodes, f"{output_dir}/in-nid-{i}.pt")
-        elif (i+1) % number_of_batch_merge_into_one == 0:
-            
-            merged_input_nodes = torch.cat(blocks_input_nodes_to_merge)
+        batch_in_nid.append(input_nodes)
+        if (i + 1) % num_megabatch == 0 or i == len(train_dataloader) - 1:
+            merged_input_nodes = torch.cat(batch_in_nid)
             # cal unique nodes
-            unique_nodes, inverse_indices = torch.unique(merged_input_nodes, return_inverse=True)
+            unique_nodes, inverse_indices = torch.unique(
+                merged_input_nodes, return_inverse=True
+            )
 
             start_idx = 0
-            for block_index, block_input_nodes in enumerate(blocks_input_nodes_to_merge):
+            for block_index, block_input_nodes in enumerate(batch_in_nid):
                 end_idx = start_idx + block_input_nodes.size(0)
                 block_unique_indices = inverse_indices[start_idx:end_idx]
-                unique_nodes_mapping[block_index] = block_unique_indices
+                unique_inv_idx.append(block_unique_indices)
                 start_idx = end_idx
-                assert unique_nodes[unique_nodes_mapping[block_index]].equal(block_input_nodes)
+                assert unique_nodes[unique_inv_idx[block_index]].equal(
+                    block_input_nodes
+                )
 
-
-            torch.save(unique_nodes, f"{output_dir}/in-nid-{i}.pt")
+            torch.save(unique_nodes, f"{output_dir}/merge-in-nid-{i}.pt")
             ## store mapping
-            torch.save(unique_nodes_mapping, f"{output_dir}/unique_nodes_mapping-{i}.pt")
+            torch.save(unique_inv_idx, f"{output_dir}/unique_inv_idx-{i}.pt")
             # clear
-            blocks_to_merge = []
-            blocks_input_nodes_to_merge = []
-            unique_nodes_mapping = {}
+            batch_in_nid = []
+            unique_inv_idx = []
             node_counts[unique_nodes.cuda()] += 1
-            
-            
-            
-        
-            
+
         tic = time.time()
         torch.save(blocks, f"{output_dir}/train-{i}.pt")
+        torch.save(input_nodes, f"{output_dir}/in-nid-{i}.pt")
         torch.save(output_nodes, f"{output_dir}/out-nid-{i}.pt")
         save_block += time.time() - tic
 
@@ -107,7 +102,7 @@ def run(args, dataset, label_offset):
     torch.save(sorted_idx, f"{output_dir}/meta_node_popularity.pt")
     save_rank += time.time() - tic
 
-    with open("/home/ubuntu/OfflineSampling/examples/logs/merge_minibatch_sample_decompose.csv", "a") as f:
+    with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
             args.dataset,
@@ -146,7 +141,15 @@ if __name__ == "__main__":
         "--store-path", default="/nvme2n1", help="path to store subgraph"
     )
     ## add mega batch size eg 2048. 4096, 8192
-    parser.add_argument("--mega_batch_size", type=int, default=4096, help="mega batch size for training")
+    parser.add_argument(
+        "--mega_batch_size", type=int, default=4096, help="mega batch size for training"
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="logs/merge_megabatch_sample_decompose.csv",
+        help="log file",
+    )
     args = parser.parse_args()
     print(args)
 

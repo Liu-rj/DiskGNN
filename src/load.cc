@@ -100,7 +100,7 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
   auto all_data =
       torch::from_blob(read_buffer, data_size / sizeof(float), options);
   auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64);
-  //avoid overflow of size[0]
+  // avoid overflow of size[0]
   sizes[0] = sizes[0] * sizes[1];
   sizes = sizes.cumsum(0);
   auto sizes_ptr = sizes.data_ptr<int64_t>();
@@ -108,7 +108,6 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
   // for (int i = 0; i < 5; i++) {
   //   printf("%d\n", sizes_ptr[i]);
   // }
-
 
   std::vector<torch::Tensor> res;
   res.push_back(all_data.slice(0, 5, sizes_ptr[0] + 5)
@@ -125,19 +124,13 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
   return res;
 }
 
-std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
-                                            int64_t feature_dim) {
-  std::ifstream is(file_path, std::ifstream::binary | std::ifstream::ate);
-  if (!is.is_open()) {
-    LOG(FATAL) << "failed to open file";
-    return {};
-  }
-  std::size_t file_size = is.tellg();
-  is.close();
+torch::Tensor LoadFeats_Direct(const std::string& file_path,
+                               int64_t num_indices, int64_t feature_dim) {
+  auto total_size = num_indices * feature_dim * sizeof(float);
 
-  size_t reminder = file_size % ALIGNMENT;
+  size_t reminder = total_size % ALIGNMENT;
   size_t aligned_size =
-      reminder == 0 ? file_size : file_size - reminder + ALIGNMENT;
+      reminder == 0 ? total_size : total_size - reminder + ALIGNMENT;
   float* read_buffer = (float*)aligned_alloc(ALIGNMENT, aligned_size);
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
@@ -151,29 +144,12 @@ std::vector<torch::Tensor> LoadFeats_Direct(const std::string& file_path,
   auto options =
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
-      torch::from_blob(read_buffer, file_size / sizeof(float), options);
-  auto sizes = all_data.slice(0, 0, 5).to(torch::kInt64);
-  sizes[0] = sizes[0] * sizes[1];
-  sizes = sizes.cumsum(0);
-  auto sizes_ptr = sizes.data_ptr<int64_t>();
-  // print all of sizes
-  // for (int i = 0; i < 5; i++) {
-  //   printf("%d\n", sizes_ptr[i]);
-  // }
-
-  std::vector<torch::Tensor> res;
-  res.push_back(all_data.slice(0, 5, sizes_ptr[0] + 5)
-                    .clone()
-                    .view({sizes_ptr[0] / feature_dim, feature_dim}));
-  for (int i = 0; i < 4; i++) {
-    res.push_back(all_data.slice(0, sizes_ptr[i] + 5, sizes_ptr[i + 1] + 5)
-                      .clone()
-                      .to(torch::kInt64));
-  }
+      torch::from_blob(read_buffer, total_size / sizeof(float), options);
+  all_data = all_data.pin_memory().view({num_indices, feature_dim});
 
   free(read_buffer);
 
-  return res;
+  return all_data;
 }
 
 torch::Tensor LoadTensor(const std::string& file_path) {
