@@ -439,7 +439,7 @@ if __name__ == "__main__":
         data_appendix += "_uvai"
 
     args.res_dir = os.path.join(
-        "results_offline/{}_{}_{}".format(
+        "logs/results_offline/{}_{}_{}".format(
             args.dataset, time.strftime("%Y%m%d%H%M%S"), args.num_parts
         )
     )
@@ -601,10 +601,10 @@ if __name__ == "__main__":
         drop_last=True,
     )
 
-    graph_path = "data/offline_data/partition_"
+    graph_path = f"data/offline_data/{args.dataset}/partition_"
     # pre_sampled_gs, labels = [], []
     # with train_loader.enable_cpu_affinity():
-    #     for it, (subgs, y) in tqdm(enumerate(train_loader), total=len(train_loader)):
+    #     for it, (subgs, y) in tqdm(enumerate(train_loader), total=len(train_loader), ncols=100):
     #         subgs = dgl.unbatch(subgs)
     #         pre_sampled_gs += subgs
     #         labels.append(y)
@@ -615,6 +615,7 @@ if __name__ == "__main__":
     #                 graph_path + f"{it // 2000}.bin", pre_sampled_gs, {"labels": labels}
     #             )
     #             pre_sampled_gs, labels = [], []
+    # exit()
 
     # convert sortpool_k from percentile to number.
     num_nodes = []

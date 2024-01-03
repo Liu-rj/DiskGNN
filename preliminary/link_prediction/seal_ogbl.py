@@ -421,7 +421,7 @@ if __name__ == "__main__":
         data_appendix += "_uvai"
 
     args.res_dir = os.path.join(
-        "results/{}_{}".format(args.dataset, time.strftime("%Y%m%d%H%M%S"))
+        "logs/results/{}_{}".format(args.dataset, time.strftime("%Y%m%d%H%M%S"))
     )
     print("Results will be saved in " + args.res_dir)
     if not os.path.exists(args.res_dir):
