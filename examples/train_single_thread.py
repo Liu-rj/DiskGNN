@@ -197,7 +197,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batchsize", type=int, default=1024, help="batch size for training"
     )
-    parser.add_argument("--dataset", default="ogbn-products", help="dataset")
+    parser.add_argument("--dataset", default="friendster", help="dataset")
     parser.add_argument(
         "--fanout", type=str, default="10,10,10", help="sampling fanout"
     )
@@ -206,7 +206,7 @@ if __name__ == "__main__":
         "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
+        "--feat-cache-size", type=int, default=6400000000, help="cache size in bytes"
     )
     parser.add_argument(
         "--num-epoch", type=int, default=3, help="numbers of epoch in training"

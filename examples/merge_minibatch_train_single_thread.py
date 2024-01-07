@@ -36,14 +36,14 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
 
     size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
 
-    epoch_info_recorder = [[] for i in range(9)]
+    epoch_info_recorder = [[] for i in range(10)]
     number_of_batch_merge_into_one = args.mega_batch_size // args.batchsize
 
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        info_recorder = [0] * 9
+        info_recorder = [0] * 10
         torch.cuda.synchronize()
         first_greater_multiple_index=((size + number_of_batch_merge_into_one - 1) // number_of_batch_merge_into_one) * number_of_batch_merge_into_one
         model.train()
@@ -157,6 +157,7 @@ def train(args, dataset: OffgsDataset, address_table, cached_feats, subg_dir, au
             args.feat_cache_size,
             args.model,
             args.num_epoch,
+            size,
         ]
         for epoch_info in epoch_info_recorder:
             log_info.append(round(np.mean(epoch_info[1:]), 2))
@@ -169,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batchsize", type=int, default=1024, help="batch size for training"
     )
-    parser.add_argument("--mega_batch_size", type=int, default=4096, help="mega batch size for training")
+    parser.add_argument("--mega_batch_size", type=int, default=20480, help="mega batch size for training")
 
     parser.add_argument("--dataset", default="friendster", help="dataset")
     parser.add_argument(

@@ -13,3 +13,4 @@ dist
 
 *.out
 examples/autorun.sh
+*.log
