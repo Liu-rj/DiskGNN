@@ -2,7 +2,7 @@ import torch
 import dgl
 import numpy as np
 from ogb.nodeproppred import DglNodePropPredDataset
-from igb.dataloader import IGB260MDGLDataset
+from utils import IGB260MDGLDataset
 from ogb.lsc import MAG240MDataset
 import os
 
@@ -56,7 +56,11 @@ def load_mag240m(root: str, only_graph=True):
     feats, label = None, None
     if not only_graph:
         label = torch.from_numpy(dataset.paper_label)
-        feats = torch.from_numpy(np.fromfile(os.path.join(root, "full.npy"), dtype="float16").reshape(num_nodes, num_features))
+        feats = torch.from_numpy(
+            np.fromfile(os.path.join(root, "full_128.npy"), dtype=np.float32).reshape(
+                num_nodes, 128
+            )
+        )
     return g, feats, label, dataset.num_classes, splitted_idx, paper_offset
 
 

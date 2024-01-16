@@ -5,24 +5,32 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from load_graph import *
-from model import *
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 
 
 def run(args, dataset, label_offset):
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
 
     g, features, labels, n_classes, splitted_idx = dataset
+    print(f"features nan value: {torch.isnan(features).sum()}")
+    print(f"features dtype: {features.dtype}")
+    print(f"features shape: {features.shape}")
     print("training nodes ratio:", splitted_idx["train"].numel() / g.num_nodes())
 
     os.makedirs(dataset_path, exist_ok=True)
+    graph_path = os.path.join(dataset_path, "graph.pth")
     features_path = os.path.join(dataset_path, "features.npy")
     labels_path = os.path.join(dataset_path, "labels.npy")
     conf_path = os.path.join(dataset_path, "conf.json")
     split_idx_path = os.path.join(dataset_path, "split_idx.pth")
+
+    print("Saving graph...")
+    g = g.formats("coo")
+    torch.save(g, graph_path)
+    print("Done!")
 
     print("Saving features...")
     features_mmap = np.memmap(

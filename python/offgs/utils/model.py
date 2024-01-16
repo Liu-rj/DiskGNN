@@ -46,14 +46,14 @@ class GCN(nn.Module):
 
 
 class SAGE(nn.Module):
-    def __init__(self, in_size, hid_size, out_size, num_layers):
+    def __init__(self, in_size, hid_size, out_size, num_layers, dropout):
         super().__init__()
         self.layers = nn.ModuleList()
         self.layers.append(SAGEConv(in_size, hid_size, "mean"))
         for i in range(num_layers - 2):
             self.layers.append(SAGEConv(hid_size, hid_size, "mean"))
         self.layers.append(SAGEConv(hid_size, out_size, "mean"))
-        self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, blocks, h):
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):

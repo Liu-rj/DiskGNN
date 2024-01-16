@@ -194,15 +194,20 @@ import os
 # print(time.time() - tic)
 
 
-temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
-temp = temp.to("cuda")
+# temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
+# temp = temp.to("cuda")
 
-duration = 0
-for i in range(3):
-    temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
-    torch.cuda.synchronize()
-    tic = time.time()
-    temp = temp.to("cuda")
-    torch.cuda.synchronize()
-    duration += time.time() - tic
-print(duration / 3)
+# duration = 0
+# for i in range(3):
+#     temp = torch.rand(1000000000, dtype=torch.float32, pin_memory=True)
+#     torch.cuda.synchronize()
+#     tic = time.time()
+#     temp = temp.to("cuda")
+#     torch.cuda.synchronize()
+#     duration += time.time() - tic
+# print(duration / 3)
+
+graph_path = "/nvme1n1/offgs_dataset/ogbn-papers100M-offgs/graph.pth"
+graph = torch.load(graph_path)
+graph = dgl.add_reverse_edges(graph)
+torch.save(graph, graph_path)

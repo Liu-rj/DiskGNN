@@ -6,6 +6,8 @@ import torch
 
 class OffgsDataset:
     def __init__(self, path):
+        self.root = path
+        self.graph_path = os.path.join(path, "graph.pth")
         self.features_path = os.path.join(path, "features.npy")
         self.labels_path = os.path.join(path, "labels.npy")
         self.split_idx_path = os.path.join(path, "split_idx.pth")
@@ -24,10 +26,30 @@ class OffgsDataset:
     def mmap_features(self):
         features_shape = self.conf["features_shape"]
         features_shape[1] = self.num_features
-        features = np.memmap(self.features_path, mode="r", shape=tuple(features_shape), dtype=self.conf["features_dtype"])
+        features = np.memmap(
+            self.features_path,
+            mode="r",
+            shape=tuple(features_shape),
+            dtype=self.conf["features_dtype"],
+        )
         features = torch.from_numpy(features)
         return features
 
     @property
     def split_idx(self):
         return torch.load(self.split_idx_path)
+
+    @property
+    def graph(self):
+        return torch.load(self.graph_path)
+
+    @property
+    def features(self):
+        features_shape = self.conf["features_shape"]
+        features_shape[1] = self.num_features
+        features = np.fromfile(
+            self.features_path,
+            dtype=self.conf["features_dtype"],
+        ).reshape(tuple(features_shape))
+        features = torch.from_numpy(features)
+        return features
