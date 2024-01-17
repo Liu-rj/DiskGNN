@@ -5,31 +5,50 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from load_graph import *
-from model import *
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 import csv
 
 import offgs
 
 
-def run(args, dataset, label_offset):
-    fanout = [int(x) for x in args.fanout.split(",")]
-    output_dir = f"{args.store_path}/{args.dataset}-{args.batchsize}-{args.fanout}"
+def run(args, dataset: OffgsDataset):
+    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    output_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
+    output_dir = os.path.join(args.store_path, output_dir)
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
-    g, features, labels, n_classes, splitted_idx = dataset
-    g = g.formats("csc")
-    train_nid, _, _ = (
-        splitted_idx["train"],
-        splitted_idx["valid"],
-        splitted_idx["test"],
+    process = psutil.Process(os.getpid())
+    mem = process.memory_info().rss / (1024 * 1024 * 1024)
+
+    g = dataset.graph
+    print(g)
+    train_nid = (
+        dataset.split_idx["train"]
+        if args.ratio == 1.0
+        else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
     )
 
-    sampler = NeighborSampler(fanout)
+    mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
+    print("Memory consumption:", mem1 - mem, "GB")
+
+    # int_part, dec_part2 = int(args.ratio), args.ratio - int(args.ratio)
+    # dec_size = int(dec_part2 * train_nid.numel())
+    # perm_idx = [torch.randperm(train_nid.numel()) for i in range(int_part)]
+    # perm_idx.append(torch.randperm(train_nid.numel())[:dec_size])
+    # perm_idx = torch.cat(perm_idx, dim=0)
+    # print(
+    #     f"Subsampled {perm_idx.numel()} nodes from {train_nid.numel()} nodes,",
+    #     f"ratio: {perm_idx.numel() / train_nid.numel()}",
+    # )
+    # train_nid = train_nid[perm_idx]  # subsample
+
+    torch.save(train_nid, f"{dataset_path}/train_idx_{args.ratio}.pt")
+
+    sampler = NeighborSampler(eval(args.fanout))
     train_dataloader = DataLoader(
         g,
         train_nid,
@@ -46,7 +65,9 @@ def run(args, dataset, label_offset):
     node_counts = torch.zeros(g.num_nodes(), dtype=torch.int64, device="cuda")
     sample_time, save_block, save_rank = 0, 0, 0
     tic = time.time()
-    for i, (input_nodes, output_nodes, blocks) in enumerate(tqdm(train_dataloader)):
+    for i, (input_nodes, output_nodes, blocks) in enumerate(
+        tqdm(train_dataloader, ncols=100)
+    ):
         for it, block in enumerate(blocks):
             block.ndata.clear()
             block.edata.clear()
@@ -77,6 +98,7 @@ def run(args, dataset, label_offset):
             args.dataset,
             args.fanout,
             args.batchsize,
+            args.ratio,
             round(sample_time, 2),
             round(save_block, 2),
             round(save_rank, 2),
@@ -94,47 +116,17 @@ def run(args, dataset, label_offset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="ogbn-products",
-        help="which dataset to load for training",
-    )
-    parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
-    )
-    parser.add_argument(
-        "--fanout", type=str, default="10,10,10", help="sampling fanout"
-    )
-    parser.add_argument(
-        "--store-path", default="/nvme2n1", help="path to store subgraph"
-    )
-    parser.add_argument(
-        "--log", type=str, default="logs/sample_decompose.csv", help="log file"
-    )
+    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--batchsize", type=int, default=1024)
+    parser.add_argument("--fanout", type=str, default="10,10,10")
+    parser.add_argument("--store-path", default="/nvme2n1")
+    parser.add_argument("--log", type=str, default="logs/sample_decompose.csv")
+    parser.add_argument("--ratio", type=float, default=1.0)
     args = parser.parse_args()
     print(args)
 
-    # --- load data --- #
-    process = psutil.Process(os.getpid())
-    mem = process.memory_info().rss / (1024 * 1024 * 1024)
+    # --- load dataset --- #
+    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    dataset = OffgsDataset(dataset_path)
 
-    label_offset = 0
-    if args.dataset.startswith("ogbn"):
-        dataset = load_ogb(args.dataset, "/efs/rjliu/dataset")
-    elif args.dataset.startswith("igb"):
-        dataset = load_igb(args)
-    elif args.dataset == "mag240m":
-        dataset = load_mag240m("/efs/rjliu/dataset/mag240m", only_graph=False)
-        label_offset = dataset[-1]
-        dataset = dataset[:-1]
-    elif args.dataset == "friendster":
-        dataset = load_dglgraph("/efs/rjliu/dataset/friendster/friendster.bin", 0, 0)
-    else:
-        raise NotImplementedError
-
-    print(dataset[0])
-    mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
-    print("Graph total memory:", mem1 - mem, "GB")
-
-    run(args, dataset, label_offset)
+    run(args, dataset)

@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from tqdm import tqdm, trange
 import pandas as pd
 from load_graph import *
-from model import *
-from dataset import OffgsDataset
+from offgs.utils import SAGE, GAT
+from offgs.dataset import OffgsDataset
 from queue import Queue
 import threading
 import psutil
@@ -29,21 +29,37 @@ def train(
     subg_dir: str,
     aux_dir: str,
 ):
+    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
 
-    labels = dataset.labels.pin_memory()
+    # labels = dataset.labels.pin_memory()
+    labels = torch.randint(0, dataset.num_classes, (dataset.num_nodes,)).pin_memory()
     cpu_cached_feats = cpu_cached_feats.pin_memory()
 
     if args.model == "SAGE":
-        model = SAGE(dataset.num_features, 256, dataset.num_classes, len(fanout)).to(
-            device
-        )
+        model = SAGE(
+            dataset.num_features,
+            256,
+            dataset.num_classes,
+            len(fanout),
+            args.dropout,
+        ).to(device)
     elif args.model == "GAT":
-        model = GAT(dataset.num_features, 256, dataset.num_classes, [8, 2]).to(device)
+        model = GAT(
+            dataset.num_features,
+            256,
+            dataset.num_classes,
+            [8, 2],
+        ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    size = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
+    train_nid = (
+        dataset.split_idx["train"]
+        if args.ratio == 1.0
+        else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
+    )
+    size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
 
     epoch_info_recorder = [[] for i in range(10)]
     num_megabatch = args.mega_batch_size // args.batchsize
@@ -57,11 +73,6 @@ def train(
         torch.cuda.synchronize()
         model.train()
         for i in trange(size, ncols=100):
-            # tic = time.time()
-            # with open("/proc/sys/vm/drop_caches", "w") as stream:
-            #     stream.write("1\n")
-            # clear_cache += time.time() - tic
-
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
@@ -182,6 +193,7 @@ def train(
             args.dataset,
             args.fanout,
             args.batchsize,
+            args.ratio,
             args.mega_batch_size,
             args.cpu_cache_size,
             args.gpu_cache_size,
@@ -222,8 +234,10 @@ def init_cache(args, dataset, cached_nodes):
 def start(args):
     total_cache_size = args.cpu_cache_size + args.gpu_cache_size
 
-    subg_dir = f"{args.dir}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
-    aux_dir = f"{subg_dir}/cache-size-{total_cache_size}"
+    subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
+    subg_dir = os.path.join(args.dir, subg_dir)
+    mega_batch_dir = os.path.join(subg_dir, str(args.mega_batch_size))
+    aux_dir = os.path.join(mega_batch_dir, f"cache-size-{total_cache_size}")
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
@@ -258,33 +272,24 @@ def start(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=int, default=0, help="Training model device")
-    parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
-    )
-    parser.add_argument(
-        "--mega_batch_size", type=int, default=4096, help="mega batch size for training"
-    )
-    parser.add_argument("--dataset", default="friendster", help="dataset")
-    parser.add_argument(
-        "--fanout", type=str, default="10,10,10", help="sampling fanout"
-    )
-    parser.add_argument("--model", type=str, default="SAGE", help="training model")
-    parser.add_argument(
-        "--dir", type=str, default="/nvme2n1", help="path to store subgraph"
-    )
-    parser.add_argument(
-        "--feat-cache-size", type=int, default=6400000000, help="cache size in bytes"
-    )
-    parser.add_argument(
-        "--num-epoch", type=int, default=3, help="numbers of epoch in training"
-    )
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--batchsize", type=int, default=1024)
+    parser.add_argument("--mega_batch_size", type=int, default=4096)
+    parser.add_argument("--dataset", default="ogbn-products")
+    parser.add_argument("--fanout", type=str, default="10,10,10")
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--model", type=str, default="SAGE")
+    parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
+    parser.add_argument("--ratio", type=float, default="1.0")
+    parser.add_argument("--cpu-cache-size", type=int, default=1000000000)
+    parser.add_argument("--gpu-cache-size", type=int, default=1000000000)
+    parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument(
         "--log",
         type=str,
         default="logs/merge_minibatch_train_single_thread_decompose.csv",
-        help="log file",
     )
+    # debug flag
     parser.add_argument("--debug", action="store_true", help="debug mode")
     args = parser.parse_args()
     print(args)

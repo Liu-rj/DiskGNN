@@ -5,28 +5,27 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from load_graph import *
-from model import *
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 import csv
 
 import offgs
 
 
 def run(dataset, args):
-    output_dir = (
-        f"{args.store_path}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
-    )
-    aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
-
+    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
+    subg_dir = os.path.join(args.store_path, subg_dir)
+    output_dir = os.path.join(subg_dir, str(args.mega_batch_size))
+    aux_dir = os.path.join(output_dir, f"cache-size-{args.feat_cache_size}")
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
 
     features = dataset.mmap_features
 
-    sorted_idx = torch.load(f"{output_dir}/meta_node_popularity.pt").cpu()
+    sorted_idx = torch.load(f"{subg_dir}/meta_node_popularity.pt").cpu()
 
     feat_load_time, nid_load_time, difference_time, save_time = 0, 0, 0, 0
 
@@ -35,10 +34,14 @@ def run(dataset, args):
 
     start = time.time()
 
+    train_idx = (
+        dataset.split_idx["train"]
+        if args.ratio == 1.0
+        else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
+    )
+    num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
+
     tic = time.time()
-    num_batches = (
-        dataset.split_idx["train"].numel() + args.batchsize - 1
-    ) // args.batchsize
     table_size = 4 * dataset.num_nodes
     num_entries = min(
         (args.feat_cache_size - table_size) // (4 * features.shape[1]),
@@ -115,6 +118,7 @@ def run(dataset, args):
             args.dataset,
             args.fanout,
             args.batchsize,
+            args.ratio,
             args.mega_batch_size,
             args.feat_cache_size,
             total_cold_nodes,
@@ -139,36 +143,15 @@ def run(dataset, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="friendster")
+    parser.add_argument("--batchsize", type=int, default=1024)
+    parser.add_argument("--mega_batch_size", type=int, default=10240)
+    parser.add_argument("--fanout", type=str, default="10,10,10")
+    parser.add_argument("--store-path", default="/nvme2n1")
+    parser.add_argument("--ratio", type=float, default=1.0)
+    parser.add_argument("--feat-cache-size", type=int, default=6400000000)
     parser.add_argument(
-        "--dataset",
-        type=str,
-        default="friendster",
-        help="which dataset to load for training",
-    )
-    parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
-    )
-    parser.add_argument(
-        "--mega_batch_size",
-        type=int,
-        default=10240,
-        help="mega batch size for training",
-    )
-
-    parser.add_argument(
-        "--fanout", type=str, default="10,10,10", help="sampling fanout"
-    )
-    parser.add_argument(
-        "--store-path", default="/nvme2n1", help="path to store subgraph"
-    )
-    parser.add_argument(
-        "--feat-cache-size", type=int, default=6400000000, help="cache size in bytes"
-    )
-    parser.add_argument(
-        "--log",
-        type=str,
-        default="logs/merge_minibatch_pack_decompose.csv",
-        help="log file",
+        "--log", type=str, default="logs/merge_minibatch_pack_decompose.csv"
     )
     args = parser.parse_args()
     print(args)
