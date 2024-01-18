@@ -94,16 +94,17 @@
 
 
 # IGB-FULL
-python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/rjliu/dataset/igb_full --store-path /nvme1n1/offgs_dataset
+# python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/rjliu/dataset/igb_full --store-path /nvme1n1/offgs_dataset
 # sudo env PATH=$PATH python sampling.py --dataset igb-full --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 0.2
 # sudo env PATH=$PATH python sampling.py --dataset igb-full --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 0.1
 # sudo env PATH=$PATH python sampling.py --dataset igb-full --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 0.05
 # sudo env PATH=$PATH python sampling.py --dataset igb-full --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 0.01
 
+# sudo env PATH=$PATH python feat_packing.py --dataset igb-full --feat-cache-size=30000000000 --store-path /nvme1n1/offgs_dataset --ratio 0.2
 # sudo env PATH=$PATH python feat_packing.py --dataset igb-full --feat-cache-size=45800000000 --store-path /nvme1n1/offgs_dataset --ratio 0.1
 # sudo env PATH=$PATH python feat_packing.py --dataset igb-full --feat-cache-size=45800000000 --store-path /nvme1n1/offgs_dataset --ratio 0.05
 # sudo env PATH=$PATH python feat_packing.py --dataset igb-full --feat-cache-size=45800000000 --store-path /nvme1n1/offgs_dataset --ratio 0.05
-# sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --gpu-cache-size=0 --cpu-cache-size=200000000 --dir /nvme1n1/offgs_dataset
+# sudo env PATH=$PATH python train_single_thread.py --dataset igb-full --gpu-cache-size=10000000000 --cpu-cache-size=20000000000 --dir /nvme1n1/offgs_dataset --ratio 0.2
 # sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --gpu-cache-size=100000000 --cpu-cache-size=100000000 --dir /nvme1n1/offgs_dataset
 # sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --gpu-cache-size=200000000 --cpu-cache-size=0 --dir /nvme1n1/offgs_dataset
 # python runner_igbfull.py --dataset igb-full --num-epoch 10 --batchsize 1024 --dir /nvme1n1/offgs_dataset
@@ -111,7 +112,7 @@ python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/rjl
 
 
 # MAG240M
-python prepare_dataset.py --dataset mag240m --store-path /nvme1n1/offgs_dataset
+# python prepare_dataset.py --dataset mag240m --store-path /nvme1n1/offgs_dataset
 # sudo env PATH=$PATH python sampling.py --dataset mag240m --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 1 --use-artifitial-train
 # sudo env PATH=$PATH python sampling.py --dataset mag240m --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 2
 
@@ -147,29 +148,32 @@ python prepare_dataset.py --dataset mag240m --store-path /nvme1n1/offgs_dataset
 # done
 
 
-log_dir=logs/merge_minibatch_train_single_thread_decompose.csv
+# log_dir=logs/merge_minibatch_train_single_thread_decompose.csv
 # datasets=(ogbn-products ogbn-papers100M friendster)
 # batchsizes=(4096 10240)
 # cachesizes_2=(200000000 10000000000 6400000000)
 # cachesizes_6=(600000000 32000000000 19200000000)
 
-datasets=(mag240m)
-batchsizes=(4096 10240 40960)
-cachesizes_2=(20000000000)
-cachesizes_6=(30000000000)
+# datasets=(igb-full igb-full)
+# mega_batch_size=(5000000000 10000000000)
+# feat_cache_size=(25000000000 20000000000)
+# cpu_cache_size=(15000000000 10000000000)
+# gpu_cache_size=(10000000000 10000000000)
+# ratio=(0.2 0.2)
+
+datasets=(igb-full igb-full)
+mega_batch_size=(2000000000 1000000000)
+feat_cache_size=(28000000000 29000000000)
+cpu_cache_size=(18000000000 19000000000)
+gpu_cache_size=(10000000000 10000000000)
+ratio=(0.2 0.2)
 
 for i in ${!datasets[@]}
 do
-for batchsize in ${batchsizes[@]}
-do
-# sudo env PATH=$PATH python merge_minibatch_sample.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --fanout "10,10,10" --store-path /nvme1n1/offgs_dataset
-
-# sudo env PATH=$PATH python merge_minibatch_packing.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]}
-sudo env PATH=$PATH python merge_minibatch_train_single_thread.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --cpu-cache-size 10000000000 --gpu-cache-size 10000000000 --log ${log_dir}
-# sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_2[$i]} --log ${log_dir} --mega_batch
-
-# sudo env PATH=$PATH python merge_minibatch_packing.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --store-path /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]}
-# sudo env PATH=$PATH python merge_minibatch_train_single_thread.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --cpu-cache-size 20000000000 --gpu-cache-size 10000000000 --log ${log_dir}
-# sudo env PATH=$PATH python runner.py --dataset ${datasets[$i]} --mega_batch_size ${batchsize} --batchsize 1024 --dir /nvme1n1/offgs_dataset --feat-cache-size ${cachesizes_6[$i]} --log ${log_dir} --mega_batch
+sudo env PATH=$PATH python merge_minibatch_sample.py --dataset ${datasets[$i]} --feat-cache-size ${feat_cache_size[$i]} --mega-batch-size ${mega_batch_size[$i]} --batchsize 1024 --fanout "10,10,10" --store-path /nvme1n1/offgs_dataset --ratio ${ratio[$i]}
+sudo env PATH=$PATH python merge_minibatch_packing.py --dataset ${datasets[$i]} --feat-cache-size ${feat_cache_size[$i]} --mega_batch_size ${mega_batch_size[$i]} --batchsize 1024 --fanout "10,10,10" --store-path /nvme1n1/offgs_dataset --ratio ${ratio[$i]}
+sudo env PATH=$PATH python merge_minibatch_train_single_thread.py --dataset ${datasets[$i]} --cpu-cache-size ${cpu_cache_size[$i]} --gpu-cache-size ${gpu_cache_size[$i]} --mega_batch_size ${mega_batch_size[$i]} --batchsize 1024 --fanout "10,10,10" --dir /nvme1n1/offgs_dataset --ratio ${ratio[$i]}
 done
-done
+
+
+sudo env PATH=$PATH python merge_minibatch_train_single_thread.py --dataset igb-full --cpu-cache-size 19000000000 --gpu-cache-size 10000000000 --mega_batch_size 1000000000 --batchsize 1024 --fanout "10,10,10" --dir /nvme1n1/offgs_dataset --ratio 0.2

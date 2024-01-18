@@ -14,17 +14,24 @@ import csv
 import offgs
 
 
-def run(dataset, args):
+def run(dataset: OffgsDataset, args):
+    device = torch.device(f"cuda:{args.device}")
+
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.store_path, subg_dir)
-    output_dir = os.path.join(subg_dir, str(args.mega_batch_size))
-    aux_dir = os.path.join(output_dir, f"cache-size-{args.feat_cache_size}")
+    mega_batch_dir = os.path.join(
+        subg_dir,
+        f"cache-size-{args.feat_cache_size}-mega-batch-size-{args.mega_batch_size}",
+    )
+    aux_dir = os.path.join(mega_batch_dir, f"cache-size-{args.feat_cache_size}")
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
 
-    features = dataset.mmap_features
+    # features = dataset.mmap_features
+    features = dataset.features
 
+    node_counts = torch.load(f"{subg_dir}/node_counts.pt")
     sorted_idx = torch.load(f"{subg_dir}/meta_node_popularity.pt").cpu()
 
     feat_load_time, nid_load_time, difference_time, save_time = 0, 0, 0, 0
@@ -42,25 +49,33 @@ def run(dataset, args):
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
 
     tic = time.time()
-    table_size = 4 * dataset.num_nodes
-    num_entries = min(
-        (args.feat_cache_size - table_size) // (4 * features.shape[1]),
-        dataset.num_nodes,
-    )
-    # Maximum 400GB cache size for int32 (aligned with Ginex)
-    if num_entries > torch.iinfo(torch.int32).max:
-        raise ValueError
-    print(f"#Cached Entries: {num_entries} / {dataset.num_nodes}")
-    cache_indices = sorted_idx[:num_entries]
-    address_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32)
-    address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
-    torch.save(cache_indices, f"{aux_dir}/cached_nodes.pt")
-    torch.save(address_table, f"{aux_dir}/address_table.pt")
-    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to("cuda"))
+    # table_size = 4 * dataset.num_nodes
+    # num_entries = min(
+    #     (args.feat_cache_size - table_size) // (4 * features.shape[1]),
+    #     dataset.num_nodes,
+    # )
+    # # Maximum 400GB cache size for int32 (aligned with Ginex)
+    # if num_entries > torch.iinfo(torch.int32).max:
+    #     raise ValueError
+    # print(f"#Cached Entries: {num_entries} / {dataset.num_nodes}")
+    # cache_indices = sorted_idx[:num_entries]
+    # address_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32)
+    # address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
+    # torch.save(cache_indices, f"{aux_dir}/cached_nodes.pt")
+    # torch.save(address_table, f"{aux_dir}/address_table.pt")
+    cache_nodes = torch.load(os.path.join(aux_dir, "cached_nodes.pt"))
+    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_nodes.to(device))
     cache_init_time = time.time() - tic
-    num_megabatch = args.mega_batch_size // args.batchsize
-    total_cold_nodes = 0
+    conf = json.load(open(os.path.join(mega_batch_dir, "conf.json"), "r"))
+    num_mini_batch = conf["num_mini_batch"]
+    print(f"Number of Batches per Mega-batch: {num_mini_batch}")
+    print(
+        f"#Cached Entries: {cache_nodes.numel()} / {dataset.num_nodes}",
+        f"Ratio: {cache_nodes.numel() / dataset.num_nodes}",
+        f"Access Cache Ratio: {node_counts[cache_nodes].sum().item() / node_counts.sum().item()}",
+    )
 
+    total_cold_nodes = 0
     for i in trange(num_batches, ncols=100):
         # tic = time.time()
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -68,10 +83,10 @@ def run(dataset, args):
         # clear_cache_time += time.time() - tic
 
         ## cope with the tail minibatch
-        if not ((i + 1) % num_megabatch == 0 or i == num_batches - 1):
+        if not ((i + 1) % num_mini_batch == 0 or i == num_batches - 1):
             continue
         tic = time.time()
-        input_nodes = torch.load(f"{output_dir}/merge-in-nid-{i}.pt").to("cuda")
+        input_nodes = torch.load(f"{mega_batch_dir}/merge-in-nid-{i}.pt").to(device)
         nid_load_time += time.time() - tic
 
         tic = time.time()
@@ -143,13 +158,16 @@ def run(dataset, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--dataset", type=str, default="friendster")
     parser.add_argument("--batchsize", type=int, default=1024)
     parser.add_argument("--mega_batch_size", type=int, default=10240)
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--store-path", default="/nvme2n1")
     parser.add_argument("--ratio", type=float, default=1.0)
-    parser.add_argument("--feat-cache-size", type=int, default=6400000000)
+    ## online memory consumption of mega-batch in bytes
+    parser.add_argument("--mega-batch-size", type=int, default=-1)
+    parser.add_argument("--feat-cache-size", type=int, default=-1)
     parser.add_argument(
         "--log", type=str, default="logs/merge_minibatch_pack_decompose.csv"
     )

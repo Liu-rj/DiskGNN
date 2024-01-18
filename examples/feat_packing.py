@@ -15,6 +15,8 @@ import offgs
 
 
 def run(dataset: OffgsDataset, args):
+    device = torch.device(f"cuda:{args.device}")
+
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
     output_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     output_dir = os.path.join(args.store_path, output_dir)
@@ -51,22 +53,20 @@ def run(dataset: OffgsDataset, args):
     # Maximum 400GB cache size for int32 (aligned with Ginex)
     if num_entries > torch.iinfo(torch.int32).max:
         raise ValueError
-    print(
-        f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
-        f"Ratio: {num_entries / dataset.num_nodes}",
-    )
     cache_indices = sorted_idx[:num_entries]
     # address_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32)
     # address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
     torch.save(cache_indices, f"{aux_dir}/cached_nodes.pt")
     # torch.save(address_table, f"{aux_dir}/address_table.pt")
-    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to("cuda"))
+    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
     cache_init_time = time.time() - tic
-    total_cold_nodes = 0
     print(
-        f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}"
+        f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
+        f"Ratio: {num_entries / dataset.num_nodes}",
+        f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}",
     )
 
+    total_cold_nodes = 0
     for i in trange(num_batches, ncols=100):
         # tic = time.time()
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -74,7 +74,7 @@ def run(dataset: OffgsDataset, args):
         # clear_cache_time += time.time() - tic
 
         tic = time.time()
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to("cuda")
+        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
         nid_load_time += time.time() - tic
 
         tic = time.time()
@@ -145,28 +145,14 @@ def run(dataset: OffgsDataset, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="ogbn-products",
-        help="which dataset to load for training",
-    )
-    parser.add_argument(
-        "--batchsize", type=int, default=1024, help="batch size for training"
-    )
-    parser.add_argument(
-        "--fanout", type=str, default="10,10,10", help="sampling fanout"
-    )
-    parser.add_argument(
-        "--store-path", default="/nvme2n1", help="path to store subgraph"
-    )
-    parser.add_argument(
-        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
-    )
-    parser.add_argument(
-        "--log", type=str, default="logs/pack_decompose.csv", help="log file"
-    )
-    parser.add_argument("--ratio", type=float, default=1.0, help="ratio of sampling")
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--batchsize", type=int, default=1024)
+    parser.add_argument("--fanout", type=str, default="10,10,10")
+    parser.add_argument("--store-path", default="/nvme2n1")
+    parser.add_argument("--feat-cache-size", type=int, default=200000000)
+    parser.add_argument("--log", type=str, default="logs/pack_decompose.csv")
+    parser.add_argument("--ratio", type=float, default=1.0)
     args = parser.parse_args()
     print(args)
 

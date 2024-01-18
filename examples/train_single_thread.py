@@ -74,11 +74,6 @@ def train(
 
         model.train()
         for i in trange(size, ncols=100):
-            # tic = time.time()
-            # with open("/proc/sys/vm/drop_caches", "w") as stream:
-            #     stream.write("1\n")
-            # clear_cache += time.time() - tic
-
             tic = time.time()
             if args.mega_batch == True:
                 subgraph = torch.load(f"{subg_dir}/subgraph_{i}.pt")
@@ -87,6 +82,7 @@ def train(
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
+
             tic = time.time()
             (
                 cold_nodes,

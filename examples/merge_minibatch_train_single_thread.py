@@ -3,21 +3,17 @@ from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import gather_pinned_tensor_rows
 import time
 import argparse
-from ctypes import *
-from ctypes.util import *
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-import pandas as pd
 from load_graph import *
 from offgs.utils import SAGE, GAT
 from offgs.dataset import OffgsDataset
-from queue import Queue
-import threading
 import psutil
 import csv
 from dgl.utils import gather_pinned_tensor_rows
 import offgs
+import json
 
 
 def train(
@@ -27,9 +23,10 @@ def train(
     cpu_cached_feats: torch.Tensor,
     gpu_cached_feats: torch.Tensor,
     subg_dir: str,
+    mega_batch_dir: str,
     aux_dir: str,
 ):
-    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
 
@@ -62,8 +59,10 @@ def train(
     size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
 
     epoch_info_recorder = [[] for i in range(10)]
-    num_megabatch = args.mega_batch_size // args.batchsize
-    last = size - size % num_megabatch
+    conf = json.load(open(os.path.join(mega_batch_dir, "conf.json"), "r"))
+    num_mini_batch = conf["num_mini_batch"]
+    print(f"Number of Batches per Mega-batch: {num_mini_batch}")
+    last = size - size % num_mini_batch
 
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -79,11 +78,10 @@ def train(
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
 
-            if (i + num_megabatch) % num_megabatch == 0 or i == last:
-                load_id = min(i + num_megabatch - 1, size - 1)
-                unique_inv_idx = torch.load(f"{subg_dir}/unique_inv_idx-{load_id}.pt")
-
+            if (i + num_mini_batch) % num_mini_batch == 0 or i == last:
                 tic = time.time()
+                load_id = min(i + num_mini_batch - 1, size - 1)
+                unique_inv_idx = torch.load(f"{mega_batch_dir}/unique_inv_idx-{load_id}.pt")
                 (
                     cold_nodes,
                     hot_nodes,
@@ -119,7 +117,7 @@ def train(
                 info_recorder[2] += time.time() - tic  # feat assemble
 
             tic = time.time()
-            minibatch_inv_idx = unique_inv_idx[i % num_megabatch].to(device)
+            minibatch_inv_idx = unique_inv_idx[i % num_mini_batch].to(device)
             x = torch.empty(
                 (input_nodes.numel(), dataset.num_features),
                 dtype=torch.float32,
@@ -236,7 +234,10 @@ def start(args):
 
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.dir, subg_dir)
-    mega_batch_dir = os.path.join(subg_dir, str(args.mega_batch_size))
+    mega_batch_dir = os.path.join(
+        subg_dir,
+        f"cache-size-{total_cache_size}-mega-batch-size-{args.mega_batch_size}",
+    )
     aux_dir = os.path.join(mega_batch_dir, f"cache-size-{total_cache_size}")
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
@@ -245,7 +246,7 @@ def start(args):
     mem = process.memory_info().rss / (1024 * 1024 * 1024)
 
     dataset = OffgsDataset(dataset_dir)
-    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt").cpu()
 
     (
         cpu_cached_feats,
@@ -266,6 +267,7 @@ def start(args):
         cpu_cached_feats,
         gpu_cached_feats,
         subg_dir,
+        mega_batch_dir,
         aux_dir,
     )
 
@@ -274,15 +276,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--batchsize", type=int, default=1024)
-    parser.add_argument("--mega_batch_size", type=int, default=4096)
     parser.add_argument("--dataset", default="ogbn-products")
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--ratio", type=float, default="1.0")
-    parser.add_argument("--cpu-cache-size", type=int, default=1000000000)
-    parser.add_argument("--gpu-cache-size", type=int, default=1000000000)
+    parser.add_argument("--mega_batch_size", type=int, default=-1)
+    parser.add_argument("--cpu-cache-size", type=int, default=-1)
+    parser.add_argument("--gpu-cache-size", type=int, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument(
         "--log",
