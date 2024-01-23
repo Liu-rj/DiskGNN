@@ -45,8 +45,7 @@ def run(args, dataset: OffgsDataset):
     #     f"ratio: {perm_idx.numel() / train_nid.numel()}",
     # )
     # train_nid = train_nid[perm_idx]  # subsample
-
-    torch.save(train_nid, f"{dataset_path}/train_idx_{args.ratio}.pt")
+    # torch.save(train_nid, f"{dataset_path}/train_idx_{args.ratio}.pt")
 
     sampler = NeighborSampler(eval(args.fanout))
     train_dataloader = DataLoader(

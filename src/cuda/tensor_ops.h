@@ -6,7 +6,11 @@
 namespace offgs {
 namespace cuda {
 torch::Tensor IndexSearch(torch::Tensor origin_data, torch::Tensor keys);
+std::vector<torch::Tensor> SegmentedMinHash(torch::Tensor src,
+                                            torch::Tensor dst,
+                                            torch::Tensor values,
+                                            int64_t num_src, int64_t num_dst);
 }  // namespace cuda
-}  // namespace gs
+}  // namespace offgs
 
 #endif

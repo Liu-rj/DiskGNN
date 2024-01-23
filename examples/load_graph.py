@@ -64,6 +64,24 @@ def load_mag240m(root: str, only_graph=True):
     return g, feats, label, dataset.num_classes, splitted_idx, paper_offset
 
 
+def load_friendster(root: str, feature_dim: int, num_classes):
+    graph_path = os.path.join(root, "friendster.bin")
+    data, _ = dgl.load_graphs(graph_path)
+    g: dgl.DGLGraph = data[0].long()
+    # train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
+    train_nid = torch.load(os.path.join(root, "train_010.pt"))
+    test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
+    val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
+    splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
+    g.ndata.clear()
+    g.edata.clear()
+    feats, labels = None, None
+    if feature_dim != 0:
+        feats = torch.rand((g.num_nodes(), feature_dim), dtype=torch.float32)
+        labels = torch.randint(0, num_classes, (g.num_nodes(),), dtype=torch.int64)
+    return g, feats, labels, num_classes, splitted_idx
+
+
 def load_dglgraph(root: str, feature_dim: int, num_classes):
     data, _ = dgl.load_graphs(root)
     g: dgl.DGLGraph = data[0].long()

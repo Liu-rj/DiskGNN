@@ -26,6 +26,8 @@ def run(args, dataset):
     )
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+    if not os.path.exists(f"{output_dir}/inv_idx"):
+        os.mkdir(f"{output_dir}/inv_idx")
     aux_dir = os.path.join(output_dir, f"cache-size-{args.feat_cache_size}")
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
@@ -117,7 +119,7 @@ def run(args, dataset):
 
             torch.save(unique_nodes, f"{output_dir}/merge-in-nid-{i}.pt")
             ## store mapping
-            torch.save(unique_inv_idx, f"{output_dir}/unique_inv_idx-{i}.pt")
+            torch.save(unique_inv_idx, f"{output_dir}/inv_idx/unique_inv_idx-{i}.pt")
             # clear
             batch_in_nid = []
             unique_inv_idx = []

@@ -24,6 +24,10 @@ def run(dataset: OffgsDataset, args):
 
     if not os.path.exists(aux_dir):
         os.mkdir(aux_dir)
+    if not os.path.exists(f"{aux_dir}/feat"):
+        os.mkdir(f"{aux_dir}/feat")
+    if not os.path.exists(f"{aux_dir}/meta_data"):
+        os.mkdir(f"{aux_dir}/meta_data")
 
     features = dataset.mmap_features
 
@@ -101,11 +105,11 @@ def run(dataset: OffgsDataset, args):
 
         tic = time.time()
         aux_meta_data = [cold_nodes, hot_nodes, rev_hot_idx, rev_cold_idx]
-        torch.save(aux_meta_data, f"{aux_dir}/train-aux-meta-{i}.pt")
+        torch.save(aux_meta_data, f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
 
         if cold_nodes.numel() > 0:
             mmap_packed_feats = np.memmap(
-                f"{aux_dir}/train-aux-{i}.npy",
+                f"{aux_dir}/feat/train-aux-{i}.npy",
                 mode="w+",
                 shape=packed_feats.numel(),
                 dtype=np.float32,
