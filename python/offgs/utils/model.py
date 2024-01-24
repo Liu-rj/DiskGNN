@@ -65,39 +65,38 @@ class SAGE(nn.Module):
 
 
 class GAT(nn.Module):
-    def __init__(self, in_size, hid_size, out_size, heads):
+    def __init__(self, in_size, hid_size, out_size, heads, num_layers, dropout):
         super().__init__()
         self.gat_layers = nn.ModuleList()
-        num_layers = len(heads)
         # two-layer GAT
         self.gat_layers.append(
             GATConv(
                 in_size,
                 hid_size,
-                heads[0],
-                feat_drop=0.2,
-                attn_drop=0.2,
-                activation=F.elu,
+                heads,
+                feat_drop=dropout,
+                attn_drop=dropout,
+                activation=F.relu,
             )
         )
         for i in range(num_layers - 2):
             self.gat_layers.append(
                 GATConv(
-                    hid_size * heads[i],
+                    hid_size * heads,
                     hid_size,
-                    heads[i + 1],
-                    feat_drop=0.2,
-                    attn_drop=0.2,
+                    heads,
+                    feat_drop=dropout,
+                    attn_drop=dropout,
                     activation=F.elu,
                 )
             )
         self.gat_layers.append(
             GATConv(
-                hid_size * heads[-2],
+                hid_size * heads,
                 out_size,
-                heads[-1],
-                feat_drop=0.2,
-                attn_drop=0.2,
+                heads,
+                feat_drop=dropout,
+                attn_drop=dropout,
                 activation=None,
             )
         )

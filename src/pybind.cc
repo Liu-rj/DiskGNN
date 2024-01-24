@@ -4,6 +4,7 @@
 #include "cuda/difference.h"
 #include "cuda/gather.h"
 #include "cuda/tensor_ops.h"
+#include "free.h"
 #include "gather.h"
 #include "load.h"
 
@@ -24,6 +25,8 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_LoadFeats_Direct_OMP", &LoadFeats_Direct_OMP);
   m.def("_CAPI_LoadTensor", &LoadTensor);
   m.def("_CAPI_IndexSearch", &cuda::IndexSearch);
+  m.def("_CAPI_FreeTensor", &FreeTensor);
+  m.def("_CAPI_SegmentedMinHash", &cuda::SegmentedMinHash);
 }
 
 }  // namespace offgs

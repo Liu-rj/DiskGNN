@@ -161,5 +161,40 @@ torch::Tensor IndexSearch(torch::Tensor origin_data, torch::Tensor keys) {
   torch::Tensor result = IndexHashMapSearchCUDA(key_buffer, value_buffer, keys);
   return result;
 }
+
+// Compute min value for all neighbors (dst) of each node (src) and return
+// counts for each bucket.
+std::vector<torch::Tensor> SegmentedMinHash(torch::Tensor src,
+                                            torch::Tensor dst,
+                                            torch::Tensor values,
+                                            int64_t num_src, int64_t num_dst) {
+  int64_t num_ele = src.numel();
+  torch::Tensor result = torch::full({num_src}, INT64_MAX, values.options());
+  torch::Tensor degree = torch::zeros({num_src}, values.options());
+  torch::Tensor counts = torch::zeros({num_dst}, values.options());
+
+  using it = thrust::counting_iterator<int64_t>;
+  thrust::for_each(
+      thrust::device, it(0), it(num_ele),
+      [src = src.data_ptr<int64_t>(), dst = dst.data_ptr<int64_t>(),
+       values = values.data_ptr<int64_t>(), result = result.data_ptr<int64_t>(),
+       counts = counts.data_ptr<int64_t>(),
+       degree = degree.data_ptr<int64_t>()] __device__(int64_t i) {
+        int64_t src_id = src[i];
+        int64_t dst_id = dst[i];
+        AtomicMin(&result[src_id], values[dst_id]);
+        AtomicAdd(&degree[src_id], 1);
+      });
+
+  using it = thrust::counting_iterator<int64_t>;
+  thrust::for_each(thrust::device, it(0), it(num_src),
+                   [result = result.data_ptr<int64_t>(),
+                    counts = counts.data_ptr<int64_t>()] __device__(int64_t i) {
+                     int64_t val = result[i];
+                     if (val != INT64_MAX) AtomicAdd(&counts[val], 1);
+                   });
+
+  return {result, degree, counts};
+}
 }  // namespace cuda
 }  // namespace offgs

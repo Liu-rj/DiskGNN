@@ -34,7 +34,7 @@ def train(
     if args.model == "SAGE":
         model = SAGE(
             input_dim,
-            256,
+            args.hidden,
             dataset.num_classes,
             len(fanout),
             args.dropout,
@@ -42,9 +42,11 @@ def train(
     elif args.model == "GAT":
         model = GAT(
             input_dim,
-            256,
+            args.hidden,
             dataset.num_classes,
-            [8, 2],
+            4,
+            len(fanout),
+            args.dropout,
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 

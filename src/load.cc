@@ -132,11 +132,21 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
   size_t aligned_size =
       reminder == 0 ? total_size : total_size - reminder + ALIGNMENT;
   float* read_buffer = (float*)aligned_alloc(ALIGNMENT, aligned_size);
+  size_t residual = aligned_size - total_size;
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
 
-  if (pread(fd, read_buffer, aligned_size, 0) == -1) {
-    printf("error\n");
+  auto buf = read_buffer;
+  auto bytes_left = aligned_size;
+  int64_t offset = 0;
+  while (bytes_left > residual) {
+    auto trans = pread(fd, buf, bytes_left, offset);
+    if (trans == -1) {
+      LOG(FATAL) << "ERROR: " << strerror(errno);
+    }
+    buf += trans / sizeof(float);
+    bytes_left -= trans;
+    offset += trans;
   }
 
   close(fd);
@@ -144,10 +154,11 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
   auto options =
       torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data =
-      torch::from_blob(read_buffer, total_size / sizeof(float), options);
-  all_data = all_data.pin_memory().view({num_indices, feature_dim});
+      torch::from_blob(read_buffer, total_size / sizeof(float), options)
+          .view({num_indices, feature_dim});
+  // all_data = all_data.pin_memory().view({num_indices, feature_dim});
 
-  free(read_buffer);
+  // free(read_buffer);
 
   return all_data;
 }
