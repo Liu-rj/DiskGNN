@@ -5,11 +5,10 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from load_graph import *
-from model import *
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 import csv
 
 import offgs
@@ -142,7 +141,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="friendster",
+        default="ogbn-products",
         help="which dataset to load for training",
     )
     parser.add_argument(
@@ -151,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mega_batch_size",
         type=int,
-        default=10240,
+        default=4096,
         help="mega batch size for training",
     )
 
@@ -162,7 +161,7 @@ if __name__ == "__main__":
         "--store-path", default="/nvme2n1", help="path to store subgraph"
     )
     parser.add_argument(
-        "--feat-cache-size", type=int, default=6400000000, help="cache size in bytes"
+        "--feat-cache-size", type=int, default=200000000, help="cache size in bytes"
     )
     parser.add_argument(
         "--log",
@@ -174,7 +173,8 @@ if __name__ == "__main__":
     print(args)
 
     # --- load data --- #
-    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    dataset_path = f"/nvme1n1/offgs_dataset/{args.dataset}-offgs"
+
     dataset = OffgsDataset(dataset_path)
 
     process = psutil.Process(os.getpid())

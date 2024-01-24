@@ -5,11 +5,11 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from load_graph import *
-from model import *
+
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 import csv
 
 import offgs
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="friendster",
+        default="ogbn-products",
         help="which dataset to load for training",
     )
     parser.add_argument(

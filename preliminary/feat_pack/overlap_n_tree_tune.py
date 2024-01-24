@@ -5,17 +5,17 @@ import numpy as np
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 import sys
-sys.path.insert(0, '/home/ubuntu/OfflineSampling/examples')
-import sklearn.cluster as cluster
 
+import sklearn.cluster as cluster
+sys.path.insert(0, '/home/ubuntu/OfflineSampling/examples')
 from load_graph import *
-from model import *
+
 from sklearn.cluster import AgglomerativeClustering,SpectralClustering
 import sklearn
 import psutil
 import time
 import json
-from dataset import OffgsDataset
+from offgs.dataset import OffgsDataset
 import csv
 
 import offgs
@@ -68,23 +68,57 @@ class Jaccard_TreeBuilder:
     leaf_node_cnt=0
     @staticmethod
     def jaccard_similarity(t1, t2):
+        if len(t1) == 0 or len(t2) == 0:
+            return 0,0
         combined = torch.cat((t1, t2))
         uniques, counts = combined.unique(return_counts=True)
         intersection = uniques[counts > 1]
         similarity = len(intersection) / len(uniques)
-        return similarity
+        return similarity,intersection
     @staticmethod
     def calculate_similarity_matrix(sequences):
         size = len(sequences)
         ## change sequences to tensor in cuda
         # sequences = [torch.tensor(seq).to('cuda') for seq in sequences]
-        similarity_matrix = torch.zeros(size, size).to('cuda')        
+        similarity_matrix = torch.zeros(size, size).to('cuda')   
+        ## a size*size list to store intersection
+        intersection_matrix = [[] for _ in range(size*size)] 
         for i in range(size):
             for j in range(size):
                 if i != j:
-                    similarity_matrix[i][j] = Jaccard_TreeBuilder.jaccard_similarity(sequences[i], sequences[j])
+                    similarity_matrix[i][j],intersection_matrix[i*size+j]= Jaccard_TreeBuilder.jaccard_similarity(sequences[i], sequences[j])
                 else:
                     similarity_matrix[i][j] = 1  # Maximum similarity with itself
+        intersetctiion_jaccard = torch.zeros(size*size, size*size).to('cuda')
+        for i in range(size*size):
+            for j in range(size*size):
+                if i != j:
+                    intersetctiion_jaccard[i][j],_= Jaccard_TreeBuilder.jaccard_similarity(intersection_matrix[i], intersection_matrix[j])
+                else:
+                    intersetctiion_jaccard[i][j] = 1
+        import matplotlib.pyplot as plt
+        # Plotting the distribution
+        intersection_cpu=intersetctiion_jaccard[2].cpu()
+        plt.hist(intersection_cpu, bins=2500, alpha=0.7)
+        plt.title("Value Distribution of intersection_jaccard[1]")
+        plt.xlabel("Values")
+        plt.ylabel("Frequency")
+        plt.grid(True)
+        ## save the figure
+        plt.savefig('intersection_jaccard[1].png')
+        # plt.show()
+        
+        
+        length = len(intersection_cpu)
+        indices = np.arange(length)
+        plt.bar(indices, intersection_cpu)
+        plt.ylim(0, 1)
+        plt.title("Values at Each Index of intersection_jaccard[1]")
+        plt.xlabel("Index")
+        plt.ylabel("Value")
+        plt.savefig('intersection_jaccard[2]_bar_distibute.png')
+        
+        indices = torch.where(intersetctiion_jaccard[2] > 0.4)[0]
         return similarity_matrix
 
     @staticmethod
@@ -164,7 +198,9 @@ def intersection(t1,t2):
         del combined, uniques, counts
         return -intersection
 def run(dataset, args):
-    output_dir = f"{args.store_path}/{args.dataset}-{args.fanout}"
+    output_dir = (
+        f"{args.store_path}/{args.dataset}-{args.mega_batch_size}-{args.fanout}"
+    )
     aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
 
     if not os.path.exists(output_dir):
@@ -202,18 +238,20 @@ def run(dataset, args):
     node_cnt = node_cnt[last_node_id]
     print(f"last_node_id: {last_node_id}, node_cnt: {node_cnt}")
     cache_indices = cache_indices.to("cuda")
-    
+    num_megabatch = args.mega_batch_size // args.batchsize
     
     ## we can optimize the difference set process
     cold_index_strs=[]
     for i in trange(num_batches):
+        if not ((i + 1) % num_megabatch == 0 or i == num_batches - 1):
+            continue
         tic = time.time()
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
         clear_cache_time += time.time() - tic
 
         tic = time.time()
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to("cuda")
+        input_nodes: torch.Tensor = torch.load(f"{output_dir}/merge-in-nid-{i}.pt").to("cuda")
         nid_load_time += time.time() - tic
 
         tic = time.time()
@@ -229,7 +267,7 @@ def run(dataset, args):
         difference_time += time.time() - tic
         cold_index_strs.append(cold_nodes)
     sequences = [seq.tolist() for seq in cold_index_strs]
-    switch_type_tree='random'
+    switch_type_tree='jaccard'
     if switch_type_tree=='jaccard':
         ## change sequences to tensor in cuda
         sequences = [torch.tensor(seq).to('cuda') for seq in sequences]
@@ -291,7 +329,14 @@ def run(dataset, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
-    parser.add_argument("--batchsize", type=int, default=1000, help="batch size for training")
+    parser.add_argument("--batchsize", type=int, default=1024, help="batch size for training")
+    parser.add_argument(
+        "--mega_batch_size",
+        type=int,
+        default=4096,
+        help="mega batch size for training",
+    )
+
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
     parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")
@@ -299,7 +344,7 @@ if __name__ == "__main__":
     print(args)
 
     # --- load data --- #
-    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    dataset_path = f"/nvme1n1/offgs_dataset/{args.dataset}-offgs"
     dataset = OffgsDataset(dataset_path)
 
     process = psutil.Process(os.getpid())
