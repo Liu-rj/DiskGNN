@@ -70,21 +70,20 @@ if num_entries > torch.iinfo(torch.int32).max:
     raise ValueError
 cache_indices = sorted_idx[:num_entries].to(device)
 key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices)
+print(
+    f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
+    f"Ratio: {num_entries / dataset.num_nodes}",
+    f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}",
+)
 
 
 def simulate(disk_cache_num):
-    print(f"Disk Cache Num: {disk_cache_num}")
     assert disk_cache_num + num_entries < dataset.num_nodes
 
     disk_cache = sorted_idx[num_entries : num_entries + disk_cache_num].to(device)
     disk_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32, device=device)
     disk_table[disk_cache] = torch.arange(disk_cache_num, dtype=torch.int32).to(device)
     disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache)
-    print(
-        f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
-        f"Ratio: {num_entries / dataset.num_nodes}",
-        f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}",
-    )
     print(
         f"Disk Cache Entries: {disk_cache_num} / {dataset.num_nodes}",
         f"Ratio: {disk_cache_num / dataset.num_nodes}",
@@ -126,7 +125,9 @@ def simulate(disk_cache_num):
 
     disk_size = total_cold_nodes + disk_cache_num
     print("+++++++++++++++++++++++++Before Reorder+++++++++++++++++++++++++")
-    print(f"Oringinal Cold Nodes: {original_cold_nodes}")
+    print(
+        f"Oringinal Cold Nodes: {original_cold_nodes}, blowup: {original_cold_nodes / dataset.num_nodes}"
+    )
     print(
         f"Packed Nodes: {total_cold_nodes}, Ratio: {total_cold_nodes / original_cold_nodes}"
     )
@@ -138,10 +139,22 @@ def simulate(disk_cache_num):
     tensor_dst = torch.tensor(dst, dtype=torch.int64).pin_memory()
     num_src = disk_cache_num
     num_dst = num_batches
-    h = torch.randperm(num_batches, device=device)
-    h_res, degree, counts = torch.ops.offgs._CAPI_SegmentedMinHash(
-        tensor_src, tensor_dst, h, num_src, num_dst
+    h1 = torch.randperm(num_batches, device=device)
+    h1_res, degree, counts = torch.ops.offgs._CAPI_SegmentedMinHash(
+        tensor_src, tensor_dst, h1, num_src, num_dst
     )
+    # h_res = h1_res
+    h2 = torch.randperm(num_batches, device=device)
+    h2_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
+        tensor_src, tensor_dst, h2, num_src, num_dst
+    )
+    h_res = h1_res * num_batches + h2_res
+    # h3 = torch.randperm(num_batches, device=device)
+    # h3_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
+    #     tensor_src, tensor_dst, h3, num_src, num_dst
+    # )
+    # h_res = h1_res * num_batches * num_batches + h2_res * num_batches + h3_res
+
     # node_info = zip(h_res.cpu().tolist(), degree.cpu().tolist())
     h_res_cpu, degree_cpu = h_res.cpu().tolist(), degree.cpu().tolist()
     indices = sorted(range(h_res.numel()), key=lambda k: (h_res_cpu[k], -degree_cpu[k]))
@@ -181,7 +194,9 @@ def simulate(disk_cache_num):
 
     disk_size = total_cold_nodes + disk_cache_num
     print("+++++++++++++++++++++++++After Reorder+++++++++++++++++++++++++")
-    print(f"Oringinal Cold Nodes: {original_cold_nodes}")
+    print(
+        f"Oringinal Cold Nodes: {original_cold_nodes}, blowup: {original_cold_nodes / dataset.num_nodes}"
+    )
     print(
         f"Packed Nodes: {total_cold_nodes}, Ratio: {total_cold_nodes / original_cold_nodes}"
     )
@@ -191,7 +206,7 @@ def simulate(disk_cache_num):
 
 
 io_ratio, disk_ratio, io_ratio_before = [], [], []
-# disk_cache_num_list = [int(1e6)]
+# disk_cache_num_list = [int(2e7)]
 disk_cache_num_list = np.arange(0, 1e7, 1e6, dtype=np.int64)
 for disk_cache_num in disk_cache_num_list:
     (
@@ -214,5 +229,5 @@ plt.title(f"{args.dataset} Disk Cache v.s. IO and Storage")
 plt.yticks(np.arange(0, max(np.max(io_ratio), np.max(disk_ratio)), 0.5))
 plt.grid()
 plt.legend()
-plt.savefig(f"{args.dataset}-ratio.png")
+plt.savefig(f"{args.dataset}-{args.feat_cache_size}-ratio.png")
 plt.close()
