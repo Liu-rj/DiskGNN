@@ -9,7 +9,8 @@ torch::Tensor IndexSearch(torch::Tensor origin_data, torch::Tensor keys);
 std::vector<torch::Tensor> SegmentedMinHash(torch::Tensor src,
                                             torch::Tensor dst,
                                             torch::Tensor values,
-                                            int64_t num_src, int64_t num_dst);
+                                            int64_t num_src, int64_t num_dst,
+                                            bool return_counts);
 }  // namespace cuda
 }  // namespace offgs
 

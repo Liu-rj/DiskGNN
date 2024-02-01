@@ -46,7 +46,7 @@ aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
 
 features = dataset.mmap_features
 
-node_counts = torch.load(f"{output_dir}/node_counts.pt")
+node_counts = torch.load(f"{output_dir}/node_counts.pt").cpu()
 sorted_idx = torch.load(f"{output_dir}/meta_node_popularity.pt").cpu()
 
 feat_load_time, nid_load_time, difference_time, save_time = 0, 0, 0, 0
@@ -65,11 +65,12 @@ num_entries = min(
     (args.feat_cache_size - table_size) // (4 * features.shape[1]),
     dataset.num_nodes,
 )
+num_entries = max(num_entries, 0)
 # Maximum 400GB cache size for int32 (aligned with Ginex)
 if num_entries > torch.iinfo(torch.int32).max:
     raise ValueError
-cache_indices = sorted_idx[:num_entries].to(device)
-key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices)
+cache_indices = sorted_idx[:num_entries]
+key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
 print(
     f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
     f"Ratio: {num_entries / dataset.num_nodes}",
@@ -77,157 +78,231 @@ print(
 )
 
 
-def simulate(disk_cache_num):
+def plot_page_num_ratio(bf_page_num_ratio, af_page_num_ratio):
+    plt.plot(range(num_batches), bf_page_num_ratio, label="Before Reorder")
+    plt.plot(range(num_batches), af_page_num_ratio, label="After Reorder")
+    plt.xlabel("Minibatch ID")
+    plt.ylabel("Number of Pages (before unique / after unique)")
+    plt.title(f"{args.dataset} Page Num")
+    plt.grid()
+    plt.legend()
+    plt.savefig(f"{args.dataset}-{args.feat_cache_size}-page-num-ratio.png")
+    plt.close()
+
+
+def plot_page_num(page_num):
+    plt.plot(range(num_batches), page_num, label="Page Num")
+    plt.xlabel("Minibatch ID")
+    plt.ylabel("Number of Pages")
+    plt.title(f"{args.dataset} Page Num")
+    plt.grid()
+    plt.legend()
+    plt.savefig(f"{args.dataset}-{args.feat_cache_size}-page-num.png")
+    plt.close()
+
+
+def simulate(disk_cache_num, segment_size):
     assert disk_cache_num + num_entries < dataset.num_nodes
 
-    disk_cache = sorted_idx[num_entries : num_entries + disk_cache_num].to(device)
-    disk_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int32, device=device)
-    disk_table[disk_cache] = torch.arange(disk_cache_num, dtype=torch.int32).to(device)
-    disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache)
+    num_segments = (num_batches + segment_size - 1) // segment_size
+    print(f"Num Segments: {num_segments}, Segment Size: {segment_size}")
+
+    # bf_page_num_ratio = []
+    # af_page_num_ratio = []
+    # page_num = []
+    original_cold_nodes = [0, 0]
+    total_cold_nodes = [0, 0]
+    io_traffic = [0, 0]
+    for segid in range(num_segments):
+        startid = segid * segment_size
+        endid = min((segid + 1) * segment_size, num_batches)
+
+        popularity = torch.zeros(dataset.num_nodes, dtype=torch.int32, device=device)
+        for bid in trange(startid, endid, ncols=100):
+            input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
+            (
+                cold_nodes,
+                _,
+                _,
+                _,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+            popularity[cold_nodes] += 1
+
+        seg_sorted_idx = torch.argsort(popularity, descending=True)
+        disk_cache = seg_sorted_idx[:disk_cache_num]
+        disk_table = torch.full(
+            (dataset.num_nodes,), -1, dtype=torch.int32, device=device
+        )
+        disk_table[disk_cache] = torch.arange(
+            disk_cache_num, dtype=torch.int32, device=device
+        )
+        disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache)
+        print(
+            f"Disk Cache Entries: {disk_cache_num} / {dataset.num_nodes}",
+            f"Ratio: {disk_cache_num / dataset.num_nodes}",
+            f"Access Cache Ratio: {popularity[disk_cache].sum().item() / popularity.sum().item()}",
+        )
+
+        src, dst = [], []
+        for bid in trange(startid, endid, ncols=100):
+            input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
+
+            (
+                cold_nodes,
+                _,
+                _,
+                _,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+            original_cold_nodes[0] += cold_nodes.numel()
+
+            (
+                disk_cold,
+                _,
+                disk_hot,
+                _,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(cold_nodes, disk_key, disk_value)
+
+            disk_loc = disk_table[disk_hot]
+            assert (disk_loc != -1).all()
+            src += disk_loc.cpu().tolist()
+            dst += [bid] * disk_loc.numel()
+
+            page_id = disk_loc // 8
+            unique_page_id = torch.unique(page_id)
+            # bf_page_num_ratio.append(page_id.numel() / unique_page_id.numel())
+
+            io_traffic[0] += disk_cold.numel() + unique_page_id.numel() * 8
+            total_cold_nodes[0] += disk_cold.numel()
+
+        tensor_src = torch.tensor(src, dtype=torch.int64).pin_memory()
+        tensor_dst = torch.tensor(dst, dtype=torch.int64).pin_memory()
+        num_src = disk_cache_num
+        num_dst = num_batches
+        h1 = torch.randperm(num_batches, device=device)
+        h1_res, degree = torch.ops.offgs._CAPI_SegmentedMinHash(
+            tensor_src, tensor_dst, h1, num_src, num_dst, False
+        )
+        # h_res = h1_res
+        h2 = torch.randperm(num_batches, device=device)
+        h2_res, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
+            tensor_src, tensor_dst, h2, num_src, num_dst, False
+        )
+        h_res = h1_res * num_batches + h2_res
+        # h3 = torch.randperm(num_batches, device=device)
+        # h3_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
+        #     tensor_src, tensor_dst, h3, num_src, num_dst
+        # )
+        # h_res = h1_res * num_batches * num_batches + h2_res * num_batches + h3_res
+
+        h_res_cpu, degree_cpu = h_res.cpu().tolist(), degree.cpu().tolist()
+        indices = sorted(
+            range(h_res.numel()), key=lambda k: (h_res_cpu[k], -degree_cpu[k])
+        )
+        disk_table[disk_cache[indices]] = torch.arange(
+            disk_cache_num, dtype=torch.int32, device=device
+        )
+
+        for bid in trange(startid, endid, ncols=100):
+            input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
+
+            (
+                cold_nodes,
+                _,
+                _,
+                _,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+            original_cold_nodes[1] += cold_nodes.numel()
+
+            (
+                disk_cold,
+                _,
+                disk_hot,
+                _,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(cold_nodes, disk_key, disk_value)
+
+            disk_loc = disk_table[disk_hot]
+            assert (disk_loc != -1).all()
+            page_id = disk_loc // 8
+            unique_page_id = torch.unique(page_id)
+            # page_num.append(unique_page_id.numel())
+            # af_page_num_ratio.append(page_id.numel() / unique_page_id.numel())
+
+            io_traffic[1] += disk_cold.numel() + unique_page_id.numel() * 8
+            total_cold_nodes[1] += disk_cold.numel()
+
+    assert original_cold_nodes[0] == original_cold_nodes[1]
+
+    disk_size = total_cold_nodes[0] + disk_cache_num * num_segments
     print(
-        f"Disk Cache Entries: {disk_cache_num} / {dataset.num_nodes}",
-        f"Ratio: {disk_cache_num / dataset.num_nodes}",
-        f"Access Cache Ratio: {node_counts[disk_cache].sum().item() / node_counts.sum().item()}",
+        "+++++++++++++++++++++++++Before Reorder+++++++++++++++++++++++++\n",
+        f"Oringinal Cold Nodes: {original_cold_nodes[0]}, blowup: {original_cold_nodes[0] / dataset.num_nodes}\n",
+        f"Packed Nodes: {total_cold_nodes[0]}, Ratio: {total_cold_nodes[0] / original_cold_nodes[0]}\n",
+        f"IO Traffic: {io_traffic[0]}, Ratio: {io_traffic[0] / original_cold_nodes[0]}\n",
+        f"Disk Size: {disk_size}, Ratio: {disk_size / original_cold_nodes[0]}",
+    )
+    record_before = (
+        io_traffic[0] / original_cold_nodes[0],
+        disk_size / original_cold_nodes[0],
     )
 
-    original_cold_nodes = 0
-    total_cold_nodes = 0
-    io_traffic = 0
-    src, dst = [], []
-    for i in trange(num_batches, ncols=100):
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
-
-        (
-            cold_nodes,
-            rev_cold_idx,
-            hot_nodes,
-            rev_hot_idx,
-        ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
-        original_cold_nodes += cold_nodes.numel()
-
-        (
-            disk_cold,
-            _,
-            disk_hot,
-            _,
-        ) = torch.ops.offgs._CAPI_QueryHashMap(cold_nodes, disk_key, disk_value)
-
-        disk_loc = disk_table[disk_hot]
-        assert (disk_loc != -1).all()
-        src += disk_loc.cpu().tolist()
-        dst += [i] * disk_loc.numel()
-
-        page_id = disk_loc // 8
-        unique_page_id = torch.unique(page_id)
-
-        io_traffic += disk_cold.numel() + unique_page_id.numel() * 8
-        total_cold_nodes += disk_cold.numel()
-
-    disk_size = total_cold_nodes + disk_cache_num
-    print("+++++++++++++++++++++++++Before Reorder+++++++++++++++++++++++++")
+    disk_size = total_cold_nodes[1] + disk_cache_num * num_segments
     print(
-        f"Oringinal Cold Nodes: {original_cold_nodes}, blowup: {original_cold_nodes / dataset.num_nodes}"
+        "+++++++++++++++++++++++++After Reorder+++++++++++++++++++++++++\n",
+        f"Oringinal Cold Nodes: {original_cold_nodes[1]}, blowup: {original_cold_nodes[1] / dataset.num_nodes}\n",
+        f"Packed Nodes: {total_cold_nodes[1]}, Ratio: {total_cold_nodes[1] / original_cold_nodes[1]}\n",
+        f"IO Traffic: {io_traffic[1]}, Ratio: {io_traffic[1] / original_cold_nodes[1]}\n",
+        f"Disk Size: {disk_size}, Ratio: {disk_size / original_cold_nodes[1]}",
     )
-    print(
-        f"Packed Nodes: {total_cold_nodes}, Ratio: {total_cold_nodes / original_cold_nodes}"
-    )
-    print(f"IO Traffic: {io_traffic}, Ratio: {io_traffic / original_cold_nodes}")
-    print(f"Disk Size: {disk_size}, Ratio: {disk_size / original_cold_nodes}")
-    record_before = (io_traffic / original_cold_nodes, disk_size / original_cold_nodes)
 
-    tensor_src = torch.tensor(src, dtype=torch.int64).pin_memory()
-    tensor_dst = torch.tensor(dst, dtype=torch.int64).pin_memory()
-    num_src = disk_cache_num
-    num_dst = num_batches
-    h1 = torch.randperm(num_batches, device=device)
-    h1_res, degree, counts = torch.ops.offgs._CAPI_SegmentedMinHash(
-        tensor_src, tensor_dst, h1, num_src, num_dst
-    )
-    # h_res = h1_res
-    h2 = torch.randperm(num_batches, device=device)
-    h2_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
-        tensor_src, tensor_dst, h2, num_src, num_dst
-    )
-    h_res = h1_res * num_batches + h2_res
-    # h3 = torch.randperm(num_batches, device=device)
-    # h3_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
-    #     tensor_src, tensor_dst, h3, num_src, num_dst
+    # plot_page_num_ratio(
+    #     sorted(bf_page_num_ratio, reverse=True),
+    #     sorted(af_page_num_ratio, reverse=True),
     # )
-    # h_res = h1_res * num_batches * num_batches + h2_res * num_batches + h3_res
-
-    # node_info = zip(h_res.cpu().tolist(), degree.cpu().tolist())
-    h_res_cpu, degree_cpu = h_res.cpu().tolist(), degree.cpu().tolist()
-    indices = sorted(range(h_res.numel()), key=lambda k: (h_res_cpu[k], -degree_cpu[k]))
-    # h_res_sorted, indices = torch.sort(h_res)
-    disk_table[disk_cache[indices]] = torch.arange(
-        disk_cache_num, dtype=torch.int32, device=device
-    )
-
-    original_cold_nodes = 0
-    total_cold_nodes = 0
-    io_traffic = 0
-    for i in trange(num_batches, ncols=100):
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
-
-        (
-            cold_nodes,
-            rev_cold_idx,
-            hot_nodes,
-            rev_hot_idx,
-        ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
-        original_cold_nodes += cold_nodes.numel()
-
-        (
-            disk_cold,
-            _,
-            disk_hot,
-            _,
-        ) = torch.ops.offgs._CAPI_QueryHashMap(cold_nodes, disk_key, disk_value)
-
-        disk_loc = disk_table[disk_hot]
-        assert (disk_loc != -1).all()
-        page_id = disk_loc // 8
-        unique_page_id = torch.unique(page_id)
-
-        io_traffic += disk_cold.numel() + unique_page_id.numel() * 8
-        total_cold_nodes += disk_cold.numel()
-
-    disk_size = total_cold_nodes + disk_cache_num
-    print("+++++++++++++++++++++++++After Reorder+++++++++++++++++++++++++")
-    print(
-        f"Oringinal Cold Nodes: {original_cold_nodes}, blowup: {original_cold_nodes / dataset.num_nodes}"
-    )
-    print(
-        f"Packed Nodes: {total_cold_nodes}, Ratio: {total_cold_nodes / original_cold_nodes}"
-    )
-    print(f"IO Traffic: {io_traffic}, Ratio: {io_traffic / original_cold_nodes}")
-    print(f"Disk Size: {disk_size}, Ratio: {disk_size / original_cold_nodes}")
-    return original_cold_nodes, total_cold_nodes, io_traffic, disk_size, record_before
-
-
-io_ratio, disk_ratio, io_ratio_before = [], [], []
-# disk_cache_num_list = [int(2e7)]
-disk_cache_num_list = np.arange(0, 1e7, 1e6, dtype=np.int64)
-for disk_cache_num in disk_cache_num_list:
-    (
-        original_cold_nodes,
-        total_cold_nodes,
-        io_traffic,
+    return (
+        original_cold_nodes[1],
+        total_cold_nodes[1],
+        io_traffic[1],
         disk_size,
         record_before,
-    ) = simulate(disk_cache_num)
-    io_ratio.append(io_traffic / original_cold_nodes)
-    disk_ratio.append(disk_size / original_cold_nodes)
-    io_ratio_before.append(record_before[0])
+    )
 
-plt.plot(disk_cache_num_list, io_ratio, label="IO Traffic")
-plt.plot(disk_cache_num_list, io_ratio_before, label="IO Traffic w/o Reorder")
-plt.plot(disk_cache_num_list, disk_ratio, label="Disk Size")
-plt.xlabel("Disk Cache Node Num")
-plt.ylabel("Ratio")
-plt.title(f"{args.dataset} Disk Cache v.s. IO and Storage")
-plt.yticks(np.arange(0, max(np.max(io_ratio), np.max(disk_ratio)), 0.5))
-plt.grid()
-plt.legend()
-plt.savefig(f"{args.dataset}-{args.feat_cache_size}-ratio.png")
-plt.close()
+
+f = open("logs/disk_cache.csv", "a")
+writer = csv.writer(f, lineterminator="\n")
+
+io_ratio, disk_ratio, io_ratio_before = [], [], []
+# disk_cache_num_list = [int(6e6)]
+# segment_size_list = [num_batches]
+if args.dataset == "friendster":
+    disk_cache_num_list = np.arange(0, 10e6 + 2e6, 2e6, dtype=np.int64)
+    segment_size_list = [100, 200, 300, 400]
+elif args.dataset == "igb-full":
+    if args.feat_cache_size == 30000000000:
+        disk_cache_num_list = np.arange(0, 12e6 + 2e6, 2e6, dtype=np.int64)
+        segment_size_list = [500, 1000, 2000, 3000]
+    elif args.feat_cache_size == 10000000000:
+        disk_cache_num_list = np.arange(0, 20e6 + 4e6, 4e6, dtype=np.int64)
+        segment_size_list = [100, 200, 400, 800]
+for segment_size in segment_size_list:
+    for disk_cache_num in disk_cache_num_list:
+        (
+            original_cold_nodes,
+            total_cold_nodes,
+            io_traffic,
+            disk_size,
+            record_before,
+        ) = simulate(disk_cache_num, segment_size)
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.feat_cache_size,
+            segment_size,
+            disk_cache_num,
+            round(record_before[0], 3),
+            round(io_traffic / original_cold_nodes, 3),
+            round(disk_size / original_cold_nodes, 3),
+        ]
+        writer.writerow(log_info)
+
+f.close()
