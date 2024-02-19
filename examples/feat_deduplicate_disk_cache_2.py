@@ -11,6 +11,7 @@ import json
 from offgs.dataset import OffgsDataset
 import csv
 from collections import defaultdict
+from joblib import Parallel, delayed
 
 import offgs
 
@@ -60,13 +61,17 @@ train_idx = (
 )
 num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
 
+table_size = 4 * dataset.num_nodes
 num_entries = min(
-    args.feat_cache_size // (4 * features.shape[1]),
+    (args.feat_cache_size - table_size) // (4 * features.shape[1]),
     dataset.num_nodes,
 )
+num_entries = max(num_entries, 0)
+# Maximum 400GB cache size for int32 (aligned with Ginex)
+if num_entries > torch.iinfo(torch.int32).max:
+    raise ValueError
 cache_indices = sorted_idx[:num_entries]
-with torch.cuda.device(device):
-    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
+key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
 print(
     f"#Cached Entries: {num_entries} / {dataset.num_nodes}",
     f"Ratio: {num_entries / dataset.num_nodes}",
@@ -112,12 +117,10 @@ def simulate(disk_cache_num, segment_size):
     disk_size = 0
     cache_ratio, access_ratio, all_cache_num = [], [], []
     for segid in trange(num_segments, ncols=100):
-        page_cache = np.array([], dtype=np.int64)
-
         startid = segid * segment_size
         endid = min((segid + 1) * segment_size, num_batches)
 
-        popularity = torch.zeros(dataset.num_nodes, dtype=torch.int32, device=device)
+        popularity = torch.zeros(dataset.num_nodes, dtype=torch.int32)
         for bid in range(startid, endid):
             input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
             (
@@ -126,11 +129,11 @@ def simulate(disk_cache_num, segment_size):
                 _,
                 _,
             ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
-            popularity[cold_nodes] += 1
+            popularity[cold_nodes.cpu()] += 1
 
         seg_sorted_idx = torch.argsort(popularity, descending=True)
         cache_num = min(disk_cache_num, (popularity > 0).sum().item())
-        disk_cache = seg_sorted_idx[:cache_num]
+        disk_cache = seg_sorted_idx[:cache_num].to(device)
         disk_table = torch.full(
             (dataset.num_nodes,), -1, dtype=torch.int32, device=device
         )
@@ -142,12 +145,12 @@ def simulate(disk_cache_num, segment_size):
             f"\nDisk Cache Entries: {cache_num} / {dataset.num_nodes}",
             f"Ratio: {cache_num / dataset.num_nodes:.3f}",
             f"Ratio In Seg: {cache_num / (popularity > 0).sum().item():.3f}",
-            f"Access Cache Ratio: {popularity[disk_cache].sum().item() / popularity.sum().item():.3f}",
+            f"Access Cache Ratio: {popularity[disk_cache.cpu()].sum().item() / popularity.sum().item():.3f}",
         )
         all_cache_num.append(cache_num)
         cache_ratio.append(cache_num / (popularity > 0).sum().item())
         access_ratio.append(
-            popularity[disk_cache].sum().item() / popularity.sum().item()
+            popularity[disk_cache.cpu()].sum().item() / popularity.sum().item()
         )
 
         src, dst = [], []
@@ -177,15 +180,15 @@ def simulate(disk_cache_num, segment_size):
             page_id = disk_loc // 8
             unique_page_id = torch.unique(page_id)
             # bf_page_num_ratio.append(page_id.numel() / unique_page_id.numel())
+            disk_cold_pages = torch.unique(disk_cold // 8)
 
-            io_traffic[0] += disk_cold.numel() + unique_page_id.numel() * 8
-            total_cold_nodes[0] += disk_cold.numel()
+            io_traffic[0] += (disk_cold_pages.numel() + unique_page_id.numel()) * 8
 
         disk_size += cache_num
 
         tensor_src = torch.tensor(src, dtype=torch.int64).pin_memory()
         tensor_dst = torch.tensor(dst, dtype=torch.int64).pin_memory()
-        num_src = cache_num
+        num_src = disk_cache_num
         num_dst = num_batches
         h1 = torch.randperm(num_batches, device=device)
         h1_res, degree = torch.ops.offgs._CAPI_SegmentedMinHash(
@@ -197,20 +200,13 @@ def simulate(disk_cache_num, segment_size):
             tensor_src, tensor_dst, h2, num_src, num_dst, False
         )
         h_res = h1_res * num_batches + h2_res
-        # h3 = torch.randperm(num_batches, device=device)
-        # h3_res, _, _ = torch.ops.offgs._CAPI_SegmentedMinHash(
-        #     tensor_src, tensor_dst, h3, num_src, num_dst
-        # )
-        # h_res = h1_res * num_batches * num_batches + h2_res * num_batches + h3_res
 
-        # h_res_cpu, degree_cpu = h_res.cpu().tolist(), degree.cpu().tolist()
-        # indices = sorted(
-        #     range(h_res.numel()), key=lambda k: (h_res_cpu[k], -degree_cpu[k])
-        # )
-        # indices = sorted(range(h_res.numel()), key=lambda k: h_res_cpu[k])
-        indices = torch.argsort(h_res)
+        h_res_cpu, degree_cpu = h_res.cpu().tolist(), degree.cpu().tolist()
+        indices = sorted(
+            range(h_res.numel()), key=lambda k: (h_res_cpu[k], -degree_cpu[k])
+        )
         disk_table[disk_cache[indices]] = torch.arange(
-            cache_num, dtype=torch.int32, device=device
+            disk_cache_num, dtype=torch.int32, device=device
         )
 
         for bid in range(startid, endid):
@@ -237,16 +233,15 @@ def simulate(disk_cache_num, segment_size):
             unique_page_id = torch.unique(page_id)
             # page_num.append(unique_page_id.numel())
             # af_page_num_ratio.append(page_id.numel() / unique_page_id.numel())
+            disk_cold_pages = torch.unique(disk_cold // 8)
 
-            io_traffic[1] += disk_cold.numel() + unique_page_id.numel() * 8
-            total_cold_nodes[1] += disk_cold.numel()
+            io_traffic[1] += (disk_cold_pages.numel() + unique_page_id.numel()) * 8
 
             page_diff = np.setdiff1d(unique_page_id.cpu(), page_cache)
             io_traffic[2] += disk_cold.numel() + page_diff.shape[0] * 8
             page_cache = unique_page_id.cpu()
 
     assert original_cold_nodes[0] == original_cold_nodes[1]
-    assert total_cold_nodes[0] == total_cold_nodes[1]
 
     disk_size += total_cold_nodes[0]
     # disk_size = total_cold_nodes[0] + disk_cache_num * num_segments
@@ -289,36 +284,45 @@ def simulate(disk_cache_num, segment_size):
     )
 
 
-f = open("logs/disk_cache_new_disk_size.csv", "a")
+f = open("logs/disk_cache_2_disk_size.csv", "a")
 writer = csv.writer(f, lineterminator="\n")
 
 io_ratio, disk_ratio, io_ratio_before = [], [], []
+# disk_cache_num_list = [int(1e7)]
+# segment_size_list = [200]
 if args.dataset == "friendster":
-    disk_cache_num_list = np.arange(0, 10e6 + 2e6, 2e6, dtype=np.int64)
+    # disk_cache_num_list = np.arange(0, 10e6 + 2e6, 2e6, dtype=np.int64)
+    disk_cache_num_list = np.arange(16e6, 20e6 + 2e6, 2e6, dtype=np.int64)
+    disk_cache_num_list = np.arange(0, 20e6 + 2e6, 2e6, dtype=np.int64)
     segment_size_list = [100, 200, 300, 400]
-    # disk_cache_num_list = [int(4e6)]
-    # segment_size_list = [200]
+    # segment_size_list = [300, 400]
 elif args.dataset == "igb-full":
     if args.feat_cache_size == 3e10:
-        disk_cache_num_list = np.arange(0, 12e6 + 2e6, 2e6, dtype=np.int64)
+        # disk_cache_num_list = np.arange(0, 12e6 + 2e6, 2e6, dtype=np.int64)
+        # disk_cache_num_list = np.arange(18e6, 24e6 + 2e6, 2e6, dtype=np.int64)
+        disk_cache_num_list = np.arange(0, 24e6 + 2e6, 2e6, dtype=np.int64)
         segment_size_list = [500, 1000, 2000, 3000]
+        # segment_size_list = [1000, 2000, 3000]
     elif args.feat_cache_size == 1e10:
-        disk_cache_num_list = np.arange(0, 20e6 + 4e6, 4e6, dtype=np.int64)
+        # disk_cache_num_list = np.arange(0, 20e6 + 4e6, 4e6, dtype=np.int64)
+        # disk_cache_num_list = np.arange(36e6, 44e6 + 4e6, 4e6, dtype=np.int64)
+        disk_cache_num_list = np.arange(0, 44e6 + 4e6, 4e6, dtype=np.int64)
         segment_size_list = [100, 200, 400, 800]
+        # segment_size_list = [400, 800]
 for segment_size in segment_size_list:
+    previous_io_traffic = 0
     for disk_cache_num in disk_cache_num_list:
-        with torch.cuda.device(device):
-            (
-                original_cold_nodes,
-                total_cold_nodes,
-                io_traffic,
-                io_traffic_opt,
-                disk_size,
-                record_before,
-                cache_ratio,
-                access_ratio,
-                avg_cache_num,
-            ) = simulate(disk_cache_num, segment_size)
+        (
+            original_cold_nodes,
+            total_cold_nodes,
+            io_traffic,
+            io_traffic_opt,
+            disk_size,
+            record_before,
+            cache_ratio,
+            access_ratio,
+            avg_cache_num,
+        ) = simulate(disk_cache_num, segment_size)
         log_info = [
             args.dataset,
             args.fanout,
@@ -335,5 +339,8 @@ for segment_size in segment_size_list:
             f"{avg_cache_num:g}",
         ]
         writer.writerow(log_info)
+        if record_before[0] == previous_io_traffic:
+            break
+        previous_io_traffic = io_traffic
 
 f.close()

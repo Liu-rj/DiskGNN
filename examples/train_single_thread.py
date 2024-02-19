@@ -23,7 +23,6 @@ import offgs
 def train(
     args,
     dataset: OffgsDataset,
-    address_table: torch.Tensor,
     cpu_cached_feats: torch.Tensor,
     gpu_cached_feats: torch.Tensor,
     subg_dir: str,
@@ -92,7 +91,7 @@ def train(
 
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
     epoch_info_recorder = [[] for i in range(10)]
-    feat_load_decompose = [[] for i in range(4)]
+    feat_load_decompose = [[] for i in range(13)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
@@ -101,160 +100,132 @@ def train(
         info_recorder = [0] * 9
         torch.cuda.synchronize()
 
-        meta_load, feat_load, feat_pin, feat_free = 0, 0, 0, 0
+        meta_load, feat_pin, feat_free = 0, 0, 0
+        feat_create, cold_load, cache_load = 0, 0, 0
+        total_disk_cold, total_disk_cache = 0, 0
+        (
+            disk_page_unique,
+            page_alloc,
+            disk_cache_load,
+            disk_cache_copy,
+            disk_page_free,
+        ) = (0, 0, 0, 0, 0)
 
         model.train()
         for i in trange(size, ncols=100):
             tic = time.time()
-            if args.mega_batch == True:
-                subgraph = torch.load(f"{subg_dir}/subgraph_{i}.pt")
-            else:
-                blocks = torch.load(f"{subg_dir}/train-{i}.pt")
+            blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
-            input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+            if args.debug:
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
 
             tic = time.time()
             (
-                cold_nodes,
-                hot_nodes,
-                rev_hot_idx,
+                disk_cold,
+                disk_rev_cold_idx,
+                disk_loc,
+                disk_rev_hot_idx,
                 rev_cold_idx,
+                mem_loc,
+                rev_hot_idx,
             ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
             meta_load += time.time() - tic
+
             tic = time.time()
-            if cold_nodes.numel() > 0:
+            num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
+            disk_feats = torch.empty(
+                (num_disk, dataset.num_features),
+                dtype=torch.float32,
+                pin_memory=True,
+            )
+            feat_create += time.time() - tic
+
+            tic = time.time()
+            if disk_cold.numel() > 0:
                 cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
                     f"{aux_dir}/feat/train-aux-{i}.npy",
-                    cold_nodes.numel(),
+                    disk_cold.numel(),
                     dataset.num_features,
                 )
-            feat_load += time.time() - tic
-            info_recorder[7] += cold_nodes.numel()  # cold_feats_num
-
-            if args.mega_batch == True:
-                tic = time.time()
-                global_nid = input_nodes.to(device)
-                cold_idx_map = torch.tensor([])
-                if cold_nodes.numel() > 0:
-                    cold_idx_map = torch.full(
-                        (subgraph.num_nodes(),),
-                        -1,
-                        dtype=torch.int32,
-                        device=device,
-                    )
-                    cold_idx_map[rev_cold_idx] = torch.arange(
-                        cold_nodes.numel(),
-                        dtype=torch.int32,
-                        device=device,
-                    )
-                torch.cuda.synchronize()
-                info_recorder[2] += time.time() - tic  # feat assemble
-
-                tic = time.time()
-                rev_idx = subgraph.train_idx.to(device)
-                sub_train_dataloader = DataLoader(
-                    subgraph,
-                    rev_idx,
-                    sampler,
-                    device=torch.device("cuda"),
-                    batch_size=1024,
-                    shuffle=True,
-                    drop_last=False,
-                    num_workers=0,
-                    use_uva=True,
-                )
-                torch.cuda.synchronize()
-                info_recorder[6] += time.time() - tic  # sample init time
-                ## may need to cal sample time here modify code!
-                sample_begin_time = time.time()
-
-                for it, (input_nodes, output_nodes, blocks) in enumerate(
-                    sub_train_dataloader
-                ):
-                    y = gather_pinned_tensor_rows(
-                        labels,
-                        global_nid[output_nodes - label_offset],
-                    ).long()
-                    torch.cuda.synchronize()
-                    # sample, graph and label transfer
-                    info_recorder[3] += time.time() - sample_begin_time
-
-                    tic = time.time()
-                    x = torch.empty(
-                        (input_nodes.numel(), dataset.num_features),
-                        dtype=torch.float32,
-                        device=device,
-                    )
-                    torch.ops.offgs._CAPI_GatherInGPU_MegaBatch(
-                        x,
-                        input_nodes,
-                        global_nid,
-                        cpu_cached_feats,
-                        gpu_cached_feats,
-                        cold_feats,
-                        address_table,
-                        cold_idx_map,
-                    )
-                    torch.cuda.synchronize()
-                    info_recorder[2] += time.time() - tic  # feat assemble
-                    info_recorder[8] += x.shape[0]  # input node num
-
-                    tic = time.time()
-                    y_hat = model(blocks, x)
-                    ## cal the acc
-                    loss = F.cross_entropy(y_hat, y)
-                    opt.zero_grad()
-                    loss.backward()
-                    opt.step()
-                    torch.cuda.synchronize()
-                    info_recorder[5] += time.time() - tic
-
-                    sample_begin_time = time.time()
-            else:
-                tic = time.time()
-                num_input = cold_nodes.numel() + hot_nodes.numel()
-                x = torch.empty(
-                    (num_input, dataset.num_features),
-                    dtype=torch.float32,
-                    device=device,
-                )
-                if cold_nodes.numel() > 0:
-                    x[rev_cold_idx] = cold_feats.to(device)
-                torch.ops.offgs._CAPI_GatherInGPU(
-                    x,
-                    rev_hot_idx,
-                    cpu_cached_feats,
-                    gpu_cached_feats,
-                    hot_nodes,
-                    address_table,
-                )
-                torch.cuda.synchronize()
-                info_recorder[2] += time.time() - tic  # feat assemble
-                info_recorder[8] += x.shape[0]  # input node num
-
-                tic = time.time()
-                blocks = [block.to(device) for block in blocks]
-                y = labels[output_nodes - label_offset].to(device).long()
-                # y = labels[output_nodes].to(device).long()
-                torch.cuda.synchronize()
-                info_recorder[3] += time.time() - tic  # graph & label transfer
-
-                tic = time.time()
-                pred = model(blocks, x)
-                loss = F.cross_entropy(pred, y)
-                tot_loss += loss.item()
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                torch.cuda.synchronize()
-                info_recorder[5] += time.time() - tic
+                disk_feats[disk_rev_cold_idx] = cold_feats
+            cold_load += time.time() - tic
 
             tic = time.time()
-            torch.ops.offgs._CAPI_FreeTensor(cold_feats)
+            (
+                load_time,
+                copy_time,
+                unique_time,
+                alloc_time,
+                free_time,
+            ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP(
+                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.npy",
+                disk_feats,
+                disk_loc,
+                disk_rev_hot_idx,
+                dataset.num_features,
+            )
+            cache_load += time.time() - tic
+            disk_page_unique += unique_time
+            page_alloc += alloc_time
+            disk_cache_load += load_time
+            disk_cache_copy += copy_time
+            disk_page_free += free_time
+            io_traffic = disk_cold.numel() + torch.unique(disk_loc // 8).numel() * 8
+            info_recorder[7] += io_traffic  # cold_feats_num
+            total_disk_cold += disk_cold.numel()
+            total_disk_cache += torch.unique(disk_loc // 8).numel() * 8
+
+            tic = time.time()
+            num_input = num_disk + mem_loc.numel()
+            x = torch.empty(
+                (num_input, dataset.num_features),
+                dtype=torch.float32,
+                device=device,
+            )
+            if num_disk > 0:
+                x[rev_cold_idx] = disk_feats.to(device)
+            torch.ops.offgs._CAPI_GatherInGPU(
+                x,
+                rev_hot_idx.to(device),
+                cpu_cached_feats,
+                gpu_cached_feats,
+                mem_loc.to(device),
+            )
+            torch.cuda.synchronize()
+            info_recorder[2] += time.time() - tic  # feat assemble
+            info_recorder[8] += x.shape[0]  # input node num
+            if args.debug:
+                input_feats = gather_pinned_tensor_rows(
+                    features, input_nodes.to(device)
+                )
+                assert torch.allclose(x, input_feats)
+
+            tic = time.time()
+            blocks = [block.to(device) for block in blocks]
+            y = labels[output_nodes - label_offset].to(device).long()
+            # y = labels[output_nodes].to(device).long()
+            torch.cuda.synchronize()
+            info_recorder[3] += time.time() - tic  # graph & label transfer
+
+            tic = time.time()
+            pred = model(blocks, x)
+            loss = F.cross_entropy(pred, y)
+            tot_loss += loss.item()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            torch.cuda.synchronize()
+            info_recorder[5] += time.time() - tic
+
+            tic = time.time()
+            if disk_cold.numel() > 0:
+                torch.ops.offgs._CAPI_FreeTensor(cold_feats)
             feat_free += time.time() - tic
 
-        info_recorder[1] += meta_load + feat_load + feat_pin + feat_free  # feature load
+        info_recorder[1] += (
+            meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
+        )  # feature load
 
         if args.debug:
             # --- valid ---#
@@ -266,7 +237,9 @@ def train(
                 blocks = [block.to(device) for block in blocks]
                 x = gather_pinned_tensor_rows(features, input_nodes.to(device))
                 # x = features[input_nodes.cpu()].to(device)
-                y = gather_pinned_tensor_rows(labels, output_nodes - label_offset).long()
+                y = gather_pinned_tensor_rows(
+                    labels, output_nodes - label_offset
+                ).long()
                 pred = model(blocks, x)
                 correct = (pred.argmax(dim=1) == y).sum().item()
                 total = y.shape[0]
@@ -298,11 +271,26 @@ def train(
                 best_test_acc = test_acc
                 best_epoch = epoch
 
+            print(
+                f"Loss: {tot_loss:.10f}\t"
+                f"Valid acc: {val_acc * 100:.2f}%\t"
+                f"Test acc: {test_acc * 100:.2f}%\t"
+            )
+
         print(
             f"Meta Load Time: {meta_load:.3f}\t"
-            f"Feat Load Time: {feat_load:.3f}\t"
+            f"Feat Create Time: {feat_create:.3f}\t"
+            f"Cold Load Time: {cold_load:.3f}\t"
+            f"Cache Load Time: {cache_load:.3f}\t"
             f"Feat Pin Time: {feat_pin:.3f}\t"
             f"Feat Free Time: {feat_free:.3f}\t"
+            f"Total Disk Cold: {total_disk_cold}\t"
+            f"Total Disk Cache: {total_disk_cache}\t"
+            f"Disk Page Unique: {disk_page_unique:.3f}\t"
+            f"Disk Page Alloc: {page_alloc:.3f}\t"
+            f"Disk Cache Load: {disk_cache_load:.3f}\t"
+            f"Disk Cache Copy: {disk_cache_copy:.3f}\t"
+            f"Disk Page Free: {disk_page_free:.3f}\t"
         )
 
         print(
@@ -316,14 +304,27 @@ def train(
             f"Epoch Time: {np.sum(info_recorder[:7]):.3f}\t"
             f"Cold Feats Num: {info_recorder[7]}\t"
             f"Block Input Node Num: {info_recorder[8]}\t"
-            f"Loss: {tot_loss:.10f}\t"
-            f"Valid acc: {val_acc * 100:.2f}%\t"
-            f"Test acc: {test_acc * 100:.2f}%\t"
         )
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(np.sum(info_recorder[:7]))
-        for i, info in enumerate([meta_load, feat_load, feat_pin, feat_free]):
+        for i, info in enumerate(
+            [
+                meta_load,
+                feat_create,
+                cold_load,
+                cache_load,
+                feat_pin,
+                feat_free,
+                total_disk_cold,
+                total_disk_cache,
+                disk_page_unique,
+                page_alloc,
+                disk_cache_load,
+                disk_cache_copy,
+                disk_page_free,
+            ]
+        ):
             feat_load_decompose[i].append(info)
 
     with open(args.log, "a") as f:
@@ -332,8 +333,8 @@ def train(
             args.dataset,
             args.fanout,
             args.batchsize,
-            args.cpu_cache_size,
-            args.gpu_cache_size,
+            f"{args.cpu_cache_size:g}",
+            f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
             args.model,
@@ -351,10 +352,10 @@ def train(
 
 def init_cache(args, dataset, cached_nodes):
     device = torch.device(f"cuda:{args.device}")
-    table_size = 4 * dataset.num_nodes
-    print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
-    gpu_idx_cache_size = max(0, args.gpu_cache_size - table_size)
-    gpu_num_entries = gpu_idx_cache_size // (4 * dataset.num_features)
+    # table_size = 4 * dataset.num_nodes
+    # print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
+    # gpu_idx_cache_size = max(0, args.gpu_cache_size - table_size)
+    gpu_num_entries = args.gpu_cache_size // (4 * dataset.num_features)
     gpu_cached_idx = cached_nodes[:gpu_num_entries]
     cpu_cache_idx = cached_nodes[gpu_num_entries:]
     gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
@@ -362,15 +363,15 @@ def init_cache(args, dataset, cached_nodes):
         (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
     )
     cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
-    address_table = torch.zeros((dataset.num_nodes,), dtype=torch.int32)
-    address_table[cpu_cache_idx] = (
-        torch.arange(cpu_cache_idx.numel(), dtype=torch.int32) + 1
-    )
-    address_table[gpu_cached_idx] = -(
-        torch.arange(gpu_cached_idx.numel(), dtype=torch.int32) + 1
-    )
-    address_table = address_table.to(device)
-    return cpu_cached_feats, gpu_cached_feats, address_table
+    # address_table = torch.zeros((dataset.num_nodes,), dtype=torch.int32)
+    # address_table[cpu_cache_idx] = (
+    #     torch.arange(cpu_cache_idx.numel(), dtype=torch.int32) + 1
+    # )
+    # address_table[gpu_cached_idx] = -(
+    #     torch.arange(gpu_cached_idx.numel(), dtype=torch.int32) + 1
+    # )
+    # address_table = address_table.to(device)
+    return cpu_cached_feats, gpu_cached_feats
 
 
 def start(args):
@@ -391,7 +392,6 @@ def start(args):
     (
         cpu_cached_feats,
         gpu_cached_feats,
-        address_table,
     ) = init_cache(args, dataset, cached_nodes)
 
     args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
@@ -403,7 +403,6 @@ def start(args):
     train(
         args,
         dataset,
-        address_table,
         cpu_cached_feats,
         gpu_cached_feats,
         subg_dir,
@@ -420,11 +419,10 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
-    parser.add_argument("--cpu-cache-size", type=int, default=1000000000)
-    parser.add_argument("--gpu-cache-size", type=int, default=1000000000)
+    parser.add_argument("--cpu-cache-size", type=float, default=1e10)
+    parser.add_argument("--gpu-cache-size", type=float, default=1e10)
+    parser.add_argument("--segment-size", type=int, default=100)
     parser.add_argument("--num-epoch", type=int, default=3)
-    ## argument whether use mega batch sampling
-    parser.add_argument("--mega_batch", action="store_true")
     parser.add_argument("--ratio", type=float, default=1)
     parser.add_argument(
         "--log", type=str, default="logs/train_single_thread_decompose.csv"
@@ -432,5 +430,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     print(args)
+    args.cpu_cache_size = int(args.cpu_cache_size)
+    args.gpu_cache_size = int(args.gpu_cache_size)
 
     start(args)

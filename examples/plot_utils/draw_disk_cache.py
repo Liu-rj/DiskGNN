@@ -3,22 +3,26 @@ from collections import defaultdict
 from draw_utils import *
 
 
-def plot_disk_cache(filter_ds, filter_cm):
-    headers, lines = read_csv("../logs/disk_cache.csv", has_header=None)
+def plot_disk_cache(log_file, filter_ds, filter_cm, name, has_opt=False):
+    headers, lines = read_csv(log_file, has_header=None)
     print(f"[Note]headers:{headers}")
 
     seg_size_dict = defaultdict(list)
     for line in lines:
         if line[0].startswith("unused"):
             continue
-        dataset, feat_cache_size = line[0], line[3]
+        dataset, feat_cache_size = line[0], float(line[3])
         if dataset != filter_ds or feat_cache_size != filter_cm:
             continue
-        seg_size, cache_num, io_before, io, disk = line[4:]
-        seg_size_dict[seg_size].append((cache_num, io_before, io, disk))
+        if has_opt:
+            seg_size, cache_num, io_before, io, io_opt, disk = line[4:10]
+            seg_size_dict[seg_size].append((cache_num, io_before, io, io_opt, disk))
+        else:
+            seg_size, cache_num, io_before, io, disk = line[4:9]
+            seg_size_dict[seg_size].append((cache_num, io_before, io, disk))
 
     for k, v in seg_size_dict.items():
-        sorted_v = sorted(v, key=lambda x: int(x[0]))
+        sorted_v = sorted(v, key=lambda x: float(x[0]))
         seg_size_dict[k] = sorted_v
 
     sorted_keys = sorted(seg_size_dict.keys(), key=lambda x: int(x))
@@ -27,10 +31,14 @@ def plot_disk_cache(filter_ds, filter_cm):
     max_y = 0
     for i, k in enumerate(sorted_keys):
         sorted_v = seg_size_dict[k]
-        cm_list = [int(x[0]) for x in sorted_v]
+        cm_list = [float(x[0]) for x in sorted_v]
         io_ratio_before = [float(x[1]) for x in sorted_v]
         io_ratio = [float(x[2]) for x in sorted_v]
-        disk_ratio = [float(x[3]) for x in sorted_v]
+        if has_opt:
+            io_ratio_opt = [float(x[3]) for x in sorted_v]
+            disk_ratio = [float(x[4]) for x in sorted_v]
+        else:
+            disk_ratio = [float(x[3]) for x in sorted_v]
         max_y = max(np.max(io_ratio_before), max_y)
         plt.plot(
             cm_list,
@@ -46,11 +54,19 @@ def plot_disk_cache(filter_ds, filter_cm):
             linestyle="-",
             color=color_list[i],
         )
+        if has_opt:
+            plt.plot(
+                cm_list,
+                io_ratio_opt,
+                label=f"IO Traffic w/ Reorder Opt {k}",
+                linestyle=":",
+                color=color_list[i],
+            )
         plt.plot(
             cm_list,
             disk_ratio,
             label=f"Disk Size {k}",
-            linestyle=":",
+            linestyle="-.",
             color=color_list[i],
         )
     plt.xlabel("Disk Cache Node Num")
@@ -59,9 +75,17 @@ def plot_disk_cache(filter_ds, filter_cm):
     plt.yticks(np.arange(0, max_y + 0.5, 0.5))
     plt.grid()
     plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-    plt_save_and_final(f"../figs/{filter_ds}-{filter_cm}-disk-cache.png")
+    plt_save_and_final(f"../figs/{filter_ds}-{filter_cm:g}-{name}.png")
 
 
-plot_disk_cache("friendster", "10000000000")
-plot_disk_cache("igb-full", "10000000000")
-plot_disk_cache("igb-full", "30000000000")
+# plot_disk_cache("../logs/disk_cache.csv", "friendster", 1e10, "disk-cache")
+# plot_disk_cache("../logs/disk_cache.csv", "igb-full", 3e10, "disk-cache")
+# plot_disk_cache("../logs/disk_cache.csv", "igb-full", 1e10, "disk-cache")
+
+plot_disk_cache("../logs/disk_cache_2.csv", "friendster", 1e10, "disk-cache-2")
+plot_disk_cache("../logs/disk_cache_2.csv", "igb-full", 3e10, "disk-cache-2")
+plot_disk_cache("../logs/disk_cache_2.csv", "igb-full", 1e10, "disk-cache-2")
+
+# plot_disk_cache("../logs/disk_cache_new.csv", "friendster", 1e10, "disk-cache", True)
+# plot_disk_cache("../logs/disk_cache_new.csv", "igb-full", 3e10, "disk-cache", True)
+# plot_disk_cache("../logs/disk_cache_new.csv", "igb-full", 1e10, "disk-cache", True)
