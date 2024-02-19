@@ -17,6 +17,12 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
                                                 int64_t num_align);
 
 torch::Tensor LoadTensor(const std::string& file_path);
+
+std::vector<double> LoadDiskCache_Direct_OMP(const std::string& file_path,
+                                             const torch::Tensor& out_data,
+                                             const torch::Tensor& in_idx,
+                                             const torch::Tensor& out_idx,
+                                             int64_t feature_dim);
 }  // namespace offgs
 
 #endif

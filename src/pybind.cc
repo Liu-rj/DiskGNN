@@ -7,6 +7,7 @@
 #include "free.h"
 #include "gather.h"
 #include "load.h"
+#include "save.h"
 
 namespace offgs {
 TORCH_LIBRARY(offgs, m) {
@@ -23,7 +24,9 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_LoadFeats", &LoadFeats);
   m.def("_CAPI_LoadFeats_Direct", &LoadFeats_Direct);
   m.def("_CAPI_LoadFeats_Direct_OMP", &LoadFeats_Direct_OMP);
+  m.def("_CAPI_LoadDiskCache_Direct_OMP", &LoadDiskCache_Direct_OMP);
   m.def("_CAPI_LoadTensor", &LoadTensor);
+  m.def("_CAPI_SaveFeats", &SaveFeats);
   m.def("_CAPI_IndexSearch", &cuda::IndexSearch);
   m.def("_CAPI_FreeTensor", &FreeTensor);
   m.def("_CAPI_SegmentedMinHash", &cuda::SegmentedMinHash);

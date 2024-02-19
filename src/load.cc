@@ -3,6 +3,7 @@
 #include <omp.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 #include <fstream>
 #include <thread>
@@ -138,15 +139,13 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
 
   auto buf = read_buffer;
   auto bytes_left = aligned_size;
-  int64_t offset = 0;
   while (bytes_left > residual) {
-    auto trans = pread(fd, buf, bytes_left, offset);
+    auto trans = read(fd, buf, bytes_left);
     if (trans == -1) {
       LOG(FATAL) << "ERROR: " << strerror(errno);
     }
     buf += trans / sizeof(float);
     bytes_left -= trans;
-    offset += trans;
   }
 
   close(fd);
@@ -187,5 +186,80 @@ torch::Tensor LoadTensor(const std::string& file_path) {
   is.close();
 
   return ret;
+}
+
+std::vector<double> LoadDiskCache_Direct_OMP(const std::string& file_path,
+                                             const torch::Tensor& out_data,
+                                             const torch::Tensor& in_idx,
+                                             const torch::Tensor& out_idx,
+                                             int64_t feature_dim) {
+  struct timespec start, end;
+
+  assert(in_idx.numel() == out_idx.numel());
+  auto num_feat_per_page =
+      static_cast<int64_t>((ALIGNMENT / sizeof(float)) / feature_dim);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  auto ret_tensors = torch::_unique2(
+      (in_idx / num_feat_per_page).to(torch::kInt64), true, true);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto unique_time = (end.tv_sec - start.tv_sec) +
+                     (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  auto page_ids = std::get<0>(ret_tensors),
+       inverse_idx = std::get<1>(ret_tensors);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  float* read_buffer =
+      (float*)aligned_alloc(ALIGNMENT, page_ids.numel() * ALIGNMENT);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto alloc_time = (end.tv_sec - start.tv_sec) +
+                    (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  // const auto processor_count = std::thread::hardware_concurrency();
+  auto omp_threads = std::min(in_idx.numel(), static_cast<int64_t>(64));
+
+  auto page_ids_ptr = page_ids.data_ptr<int64_t>(),
+       inverse_idx_ptr = inverse_idx.data_ptr<int64_t>(),
+       in_idx_ptr = in_idx.data_ptr<int64_t>(),
+       out_idx_ptr = out_idx.data_ptr<int64_t>();
+  auto out_data_ptr = out_data.data_ptr<float>();
+
+  int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+#pragma omp parallel for num_threads(omp_threads)
+  for (int i = 0; i < page_ids.numel(); i++) {
+    if (pread(fd, read_buffer + (i * ALIGNMENT) / sizeof(float), ALIGNMENT,
+              page_ids_ptr[i] * ALIGNMENT) == -1) {
+      LOG(FATAL) << "ERROR: " << strerror(errno);
+    }
+  }
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto load_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+#pragma omp parallel for num_threads(omp_threads)
+  for (int i = 0; i < in_idx.numel(); i++) {
+    auto in_offset = (inverse_idx_ptr[i] * ALIGNMENT) / sizeof(float);
+    auto residual = (in_idx_ptr[i] % num_feat_per_page) * feature_dim;
+    auto out_offset = out_idx_ptr[i] * feature_dim;
+    memcpy(out_data_ptr + out_offset, read_buffer + in_offset + residual,
+           feature_dim * sizeof(float));
+  }
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto copy_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  close(fd);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  free(read_buffer);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto free_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  return {load_time, copy_time, unique_time, alloc_time, free_time};
 }
 }  // namespace offgs

@@ -7,7 +7,7 @@ namespace offgs {
 namespace cuda {
 void GatherInGPU(torch::Tensor& out, const torch::Tensor& out_idx,
                  const torch::Tensor& in_cpu, const torch::Tensor& in_gpu,
-                 const torch::Tensor& in_idx, const torch::Tensor& map_table);
+                 const torch::Tensor& in_idx);
 
 void GatherInGPU_MegaBatch(torch::Tensor& out, const torch::Tensor& in_idx,
                            const torch::Tensor& global_idx,
