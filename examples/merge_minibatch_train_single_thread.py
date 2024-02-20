@@ -107,6 +107,7 @@ def train(
         meta_load, feat_load, feat_free, feat_pin = 0, 0, 0, 0
 
         for i in trange(size, ncols=100):
+
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
@@ -221,11 +222,12 @@ def train(
             info_recorder[5] += time.time() - tic
 
         info_recorder[1] += meta_load + feat_load + feat_pin + feat_free  # feature load
-
+        valid_correct, valid_tot, val_acc = 0, 0, 0
+        test_correct, test_tot, test_acc = 0, 0, 0
+        
         if args.debug:
             # --- valid ---#
             model.eval()
-            valid_correct, valid_tot, val_acc = 0, 0, 0
             for i, (input_nodes, output_nodes, blocks) in enumerate(
                 tqdm(val_dataloader, ncols=100)
             ):
@@ -242,7 +244,6 @@ def train(
 
             # --- test --- #
             model.eval()
-            test_correct, test_tot, test_acc = 0, 0, 0
             if args.dataset != "mag240m":
                 for i, (input_nodes, output_nodes, blocks) in enumerate(
                     tqdm(test_dataloader, ncols=100)

@@ -150,18 +150,18 @@ def run(dataset: OffgsDataset, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--dataset", type=str, default="friendster")
     parser.add_argument("--batchsize", type=int, default=1024)
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--store-path", default="/nvme2n1")
-    parser.add_argument("--feat-cache-size", type=int, default=200000000)
+    parser.add_argument("--feat-cache-size", type=int, default=6400000000)
     parser.add_argument("--log", type=str, default="logs/pack_decompose.csv")
     parser.add_argument("--ratio", type=float, default=1.0)
     args = parser.parse_args()
     print(args)
 
     # --- load data --- #
-    dataset_path = f"{args.store_path}/{args.dataset}-offgs"
+    dataset_path = f"/nvme1n1/offgs_dataset/{args.dataset}-offgs"
     dataset = OffgsDataset(dataset_path)
 
     process = psutil.Process(os.getpid())

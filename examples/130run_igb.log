@@ -1,0 +1,23 @@
+Namespace(device=0, dataset='igb-full', batchsize=1024, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', feat_cache_size=5000000000, log='logs/pack_decompose.csv', ratio=0.2)
+Memory Occupation: 0.4293022155761719 GB
+#Cached Entries: 7661358 / 269346174 Ratio: 0.028444280036441134 Access Cache Ratio: 0.3939924634106217
+Namespace(device=0, batchsize=1024, dataset='igb-full', fanout='10,10,10', dropout=0.5, model='SAGE', dir='/nvme1n1/offgs_dataset', cpu_cache_size=4000000000, gpu_cache_size=1000000000, num_epoch=3, mega_batch=False, ratio=0.2, log='logs/train_single_thread_decompose.csv', debug=False)
+Adress Table Size: 1.0033926889300346 GB
+Memory Occupation: 6.552722930908203 GB
+Train Node Ratio: 0.10119208895835291
+Namespace(device=0, dataset='igb-full', batchsize=1024, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=200000000, feat_cache_size=4800000000, log='logs/merge_megabatch_sample_decompose.csv')
+Namespace(device=0, dataset='igb-full', batchsize=1024, mega_batch_size=200000000, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, feat_cache_size=4800000000, log='logs/merge_minibatch_pack_decompose.csv')
+Memory Occupation: 0.4454307556152344 GB
+Namespace(device=0, batchsize=1024, dataset='igb-full', fanout='10,10,10', dropout=0.5, model='SAGE', dir='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=200000000, cpu_cache_size=3800000000, gpu_cache_size=1000000000, num_epoch=3, log='logs/merge_minibatch_train_single_thread_decompose.csv', debug=False)
+Namespace(device=0, dataset='igb-full', batchsize=1024, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=400000000, feat_cache_size=4600000000, log='logs/merge_megabatch_sample_decompose.csv')
+Namespace(device=0, dataset='igb-full', batchsize=1024, mega_batch_size=400000000, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, feat_cache_size=4600000000, log='logs/merge_minibatch_pack_decompose.csv')
+Memory Occupation: 0.44835662841796875 GB
+Namespace(device=0, batchsize=1024, dataset='igb-full', fanout='10,10,10', dropout=0.5, model='SAGE', dir='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=400000000, cpu_cache_size=3600000000, gpu_cache_size=1000000000, num_epoch=3, log='logs/merge_minibatch_train_single_thread_decompose.csv', debug=False)
+Namespace(device=0, dataset='igb-full', batchsize=1024, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=800000000, feat_cache_size=4200000000, log='logs/merge_megabatch_sample_decompose.csv')
+Namespace(device=0, dataset='igb-full', batchsize=1024, mega_batch_size=800000000, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, feat_cache_size=4200000000, log='logs/merge_minibatch_pack_decompose.csv')
+Memory Occupation: 0.45233917236328125 GB
+Namespace(device=0, batchsize=1024, dataset='igb-full', fanout='10,10,10', dropout=0.5, model='SAGE', dir='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=800000000, cpu_cache_size=3200000000, gpu_cache_size=1000000000, num_epoch=3, log='logs/merge_minibatch_train_single_thread_decompose.csv', debug=False)
+Namespace(device=0, dataset='igb-full', batchsize=1024, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=1600000000, feat_cache_size=3400000000, log='logs/merge_megabatch_sample_decompose.csv')
+Namespace(device=0, dataset='igb-full', batchsize=1024, mega_batch_size=1600000000, fanout='10,10,10', store_path='/nvme1n1/offgs_dataset', ratio=0.2, feat_cache_size=3400000000, log='logs/merge_minibatch_pack_decompose.csv')
+Memory Occupation: 0.4443778991699219 GB
+Namespace(device=0, batchsize=1024, dataset='igb-full', fanout='10,10,10', dropout=0.5, model='SAGE', dir='/nvme1n1/offgs_dataset', ratio=0.2, mega_batch_size=1600000000, cpu_cache_size=2400000000, gpu_cache_size=1000000000, num_epoch=3, log='logs/merge_minibatch_train_single_thread_decompose.csv', debug=False)

@@ -64,7 +64,7 @@ def run(args, dataset, label_offset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="ogbn-products")
+    parser.add_argument("--dataset", type=str, default="friendster")
     parser.add_argument("--store-path", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--path", type=str, default="/efs/rjliu/dataset/igb_full")
     parser.add_argument("--dataset_size", type=str, default="full")

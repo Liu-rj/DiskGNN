@@ -17,7 +17,7 @@ import time
 import json
 from offgs.dataset import OffgsDataset
 import csv
-
+import math
 import offgs
 class TreeNode:
     def __init__(self, value, children=None):
@@ -222,6 +222,7 @@ def run(dataset, args):
 
     tic = time.time()
     num_batches = (dataset.split_idx["train"].numel() + args.batchsize - 1) // args.batchsize
+    num_batches = math.ceil(num_batches / 10)
     table_size = 4 * dataset.num_nodes
     num_entries = min((args.feat_cache_size - table_size) // (4 * features.shape[1]), dataset.num_nodes)
     if num_entries > torch.iinfo(torch.int32).max:
@@ -267,7 +268,7 @@ def run(dataset, args):
         difference_time += time.time() - tic
         cold_index_strs.append(cold_nodes)
     sequences = [seq.tolist() for seq in cold_index_strs]
-    switch_type_tree='jaccard'
+    switch_type_tree='random'
     if switch_type_tree=='jaccard':
         ## change sequences to tensor in cuda
         sequences = [torch.tensor(seq).to('cuda') for seq in sequences]
@@ -276,7 +277,7 @@ def run(dataset, args):
         print('Total length of all current_values:', Jaccard_TreeBuilder.total_length)
     elif switch_type_tree=='random':
         # Build the tree
-        root = TreeBuilder.build_k_ary_tree(sequences,6)
+        # root = TreeBuilder.build_k_ary_tree(sequences,6)
 
         # Access the total length
         print("Total length of all current_values:", TreeBuilder.total_length)
@@ -285,6 +286,19 @@ def run(dataset, args):
     for seq in sequences:
         pre_total_len+=len(seq)
     print('pre total length: '+str(pre_total_len))
+    
+    naive_len=0
+    for i, seq in enumerate(sequences) :
+        if i==len(sequences)-1:
+            naive_len+=len(seq)
+            break
+        if i % 2 == 0:
+            set1=seq
+        if i % 2 == 1:
+            set2=seq
+            combine=set(set1)&set(set2)
+            naive_len+=len(set1)+len(set2)-len(combine)
+    print('naive length: '+str(naive_len)) 
     
 #Total length of all current_values: 39372966
 #pre total length: 44017255
@@ -328,18 +342,18 @@ def run(dataset, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="ogbn-products", help="which dataset to load for training")
+    parser.add_argument("--dataset", type=str, default="friendster", help="which dataset to load for training")
     parser.add_argument("--batchsize", type=int, default=1024, help="batch size for training")
     parser.add_argument(
         "--mega_batch_size",
         type=int,
-        default=4096,
+        default=6144,
         help="mega batch size for training",
     )
 
     parser.add_argument("--fanout", type=str, default="10,10,10", help="sampling fanout")
     parser.add_argument("--store-path", default="/nvme2n1", help="path to store subgraph")
-    parser.add_argument("--feat-cache-size", type=int, default=200000000, help="cache size in bytes")
+    parser.add_argument("--feat-cache-size", type=int, default=6400000000, help="cache size in bytes")
     args = parser.parse_args()
     print(args)
 

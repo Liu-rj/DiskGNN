@@ -105,6 +105,7 @@ def train(
 
         model.train()
         for i in trange(size, ncols=100):
+
             tic = time.time()
             if args.mega_batch == True:
                 subgraph = torch.load(f"{subg_dir}/subgraph_{i}.pt")
@@ -255,11 +256,12 @@ def train(
             feat_free += time.time() - tic
 
         info_recorder[1] += meta_load + feat_load + feat_pin + feat_free  # feature load
+        valid_correct, valid_tot, val_acc = 0, 0, 0
+        test_correct, test_tot, test_acc = 0, 0, 0
 
         if args.debug:
             # --- valid ---#
             model.eval()
-            valid_correct, valid_tot, val_acc = 0, 0, 0
             for i, (input_nodes, output_nodes, blocks) in enumerate(
                 tqdm(val_dataloader, ncols=100)
             ):
@@ -276,7 +278,6 @@ def train(
 
             # --- test --- #
             model.eval()
-            test_correct, test_tot, test_acc = 0, 0, 0
             if args.dataset != "mag240m":
                 for i, (input_nodes, output_nodes, blocks) in enumerate(
                     tqdm(test_dataloader, ncols=100)
@@ -425,7 +426,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-epoch", type=int, default=3)
     ## argument whether use mega batch sampling
     parser.add_argument("--mega_batch", action="store_true")
-    parser.add_argument("--ratio", type=float, default=1)
+    parser.add_argument("--ratio", type=float, default=1.0)
     parser.add_argument(
         "--log", type=str, default="logs/train_single_thread_decompose.csv"
     )
