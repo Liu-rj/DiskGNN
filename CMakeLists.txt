@@ -28,7 +28,7 @@ message(STATUS "Configuring for PyTorch ${TORCH_VER}")
 set(Torch_DIR "${TORCH_PREFIX}/Torch")
 find_package(Torch REQUIRED)
 
-list(APPEND OFFGS_LINKER_LIBS ${TORCH_LIBRARIES})
+list(APPEND OFFGS_LINKER_LIBS ${TORCH_LIBRARIES} uring)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${TORCH_C_FLAGS}")
 message(STATUS "Torch dir: ${Torch_DIR}")
 message(STATUS "OFFGS linker: ${OFFGS_LINKER_LIBS}")

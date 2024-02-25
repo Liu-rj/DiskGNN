@@ -25,11 +25,15 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_LoadFeats_Direct", &LoadFeats_Direct);
   m.def("_CAPI_LoadFeats_Direct_OMP", &LoadFeats_Direct_OMP);
   m.def("_CAPI_LoadDiskCache_Direct_OMP", &LoadDiskCache_Direct_OMP);
+  m.def("_CAPI_LoadDiskCache_Direct_OMP_iouring",
+        &LoadDiskCache_Direct_OMP_iouring);
   m.def("_CAPI_LoadTensor", &LoadTensor);
   m.def("_CAPI_SaveFeats", &SaveFeats);
   m.def("_CAPI_IndexSearch", &cuda::IndexSearch);
   m.def("_CAPI_FreeTensor", &FreeTensor);
   m.def("_CAPI_SegmentedMinHash", &cuda::SegmentedMinHash);
+  m.def("_CAPI_Init_iouring", &Init_iouring);
+  m.def("_CAPI_Exit_iouring", &Exit_iouring);
 }
 
 }  // namespace offgs
