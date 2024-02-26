@@ -341,6 +341,8 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
+            args.disk_cache_num,
+            args.segment_size,
             args.model,
             args.num_epoch,
             best_epoch,
@@ -383,7 +385,7 @@ def start(args):
 
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.dir, subg_dir)
-    aux_dir = f"{subg_dir}/cache-size-{total_cache_size}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
@@ -425,6 +427,7 @@ if __name__ == "__main__":
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
     parser.add_argument("--gpu-cache-size", type=float, default=1e10)
+    parser.add_argument("--disk-cache-num", type=float, default=1e6)
     parser.add_argument("--segment-size", type=int, default=100)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)
