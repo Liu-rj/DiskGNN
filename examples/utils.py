@@ -8,9 +8,9 @@ from offgs.dataset import OffgsDataset
 import dgl
 from dgl.data import DGLDataset
 import warnings
-
+import contextlib
 warnings.filterwarnings("ignore")
-
+import time
 
 class IGB260M(object):
     def __init__(
@@ -198,3 +198,20 @@ def gen_train(ratio=0.01, name="train_001.pth"):
     train_001 = torch.randperm(num_nodes)[: int(num_nodes * ratio)]
     print(f"Ratio: {train_001.numel() / num_nodes}")
     torch.save(train_001, os.path.join(dataset_path, name))
+@contextlib.contextmanager
+def with_profile_time(records):
+    torch.cuda.synchronize()
+    start = time.time()
+    yield
+    torch.cuda.synchronize()
+    end = time.time()
+    records.append((end - start) * 1000)
+@contextlib.contextmanager
+def with_profile_time_print(str):
+    torch.cuda.synchronize()
+    start = time.time()
+    yield
+    torch.cuda.synchronize()
+    end = time.time()
+    print(f"{str} Time: {(end - start) * 1000} ms")
+    

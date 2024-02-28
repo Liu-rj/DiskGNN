@@ -162,6 +162,56 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
   return all_data;
 }
 
+torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
+                                     int64_t previously_read_indices, int64_t num_indices,
+                                     int64_t feature_dim) {
+  size_t alignment = ALIGNMENT;
+  size_t start_offset = previously_read_indices * feature_dim * sizeof(float);
+
+
+  size_t misalignment = start_offset % alignment;
+  size_t aligned_start_offset = misalignment == 0 ? start_offset : start_offset - misalignment;
+  size_t extra_bytes_before = start_offset - aligned_start_offset; 
+
+  auto total_size = num_indices * feature_dim * sizeof(float);
+  size_t total_read_size = total_size + extra_bytes_before;
+  size_t reminder = total_read_size % alignment;
+  size_t aligned_size = reminder == 0 ? total_read_size : total_read_size + alignment - reminder; 
+
+  float* read_buffer = (float*)aligned_alloc(alignment, aligned_size);
+  size_t residual = aligned_size - total_read_size;
+
+  int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
+  if (fd == -1) {
+    LOG(FATAL) << "ERROR: Unable to open file " << file_path << ": " << strerror(errno);
+  }
+
+  if (lseek(fd, aligned_start_offset, SEEK_SET) == -1) {
+    LOG(FATAL) << "ERROR: lseek failed: " << strerror(errno);
+  }
+
+  auto buf = read_buffer;
+  auto bytes_left = aligned_size;
+  while (bytes_left > residual) {
+    auto trans = read(fd, buf, bytes_left);
+    if (trans == -1) {
+      LOG(FATAL) << "ERROR: read failed: " << strerror(errno);
+    }
+    buf += trans / sizeof(float);
+    bytes_left -= trans;
+  }
+
+  close(fd);
+
+  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto all_data = torch::from_blob(read_buffer + extra_bytes_before / sizeof(float), total_size / sizeof(float), options)
+      .view({num_indices, feature_dim});
+
+  // free(read_buffer);
+
+  return all_data;
+}
+
 torch::Tensor LoadTensor(const std::string& file_path) {
   std::ifstream is(file_path, std::ifstream::binary);
 

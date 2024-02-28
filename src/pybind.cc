@@ -23,6 +23,7 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_Difference", &cuda::Difference);
   m.def("_CAPI_LoadFeats", &LoadFeats);
   m.def("_CAPI_LoadFeats_Direct", &LoadFeats_Direct);
+  m.def("_CAPI_LoadFeats_Direct_lseek", &LoadFeats_Direct_lseek);
   m.def("_CAPI_LoadFeats_Direct_OMP", &LoadFeats_Direct_OMP);
   m.def("_CAPI_LoadDiskCache_Direct_OMP", &LoadDiskCache_Direct_OMP);
   m.def("_CAPI_LoadTensor", &LoadTensor);

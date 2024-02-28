@@ -144,7 +144,7 @@ def train(
             tic = time.time()
             if disk_cold.numel() > 0:
                 cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                    f"{aux_dir}/feat/train-aux-{i}.npy",
+                    f"{aux_dir}/feat/train-aux-{i}.bin",
                     disk_cold.numel(),
                     dataset.num_features,
                 )
@@ -159,7 +159,7 @@ def train(
                 alloc_time,
                 free_time,
             ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP(
-                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.npy",
+                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
                 disk_feats,
                 disk_loc,
                 disk_rev_hot_idx,

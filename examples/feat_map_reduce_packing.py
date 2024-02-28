@@ -10,10 +10,214 @@ import time
 import json
 from offgs.dataset import OffgsDataset
 import csv
+import utils
 
 import offgs
 
+def init_cache(args, dataset, cached_nodes):
 
+    device = torch.device(f"cuda:{args.device}")
+
+    cpu_cached_feats = torch.empty(
+        (cached_nodes.numel(), dataset.num_features), dtype=torch.float32
+    )
+    cpu_cached_feats[:] = dataset.mmap_features[cached_nodes]
+
+    return cpu_cached_feats
+
+def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entries, cache_indices, device, time_record, total_packed_nodes, address_table, key, value,cache_init_time):
+    num_segments = (num_batches + args.segment_size - 1) // args.segment_size
+
+    num_seg_dataset=8
+    for segid in trange(num_segments, ncols=100):
+        startid = segid * args.segment_size
+        endid = min((segid + 1) * args.segment_size, num_batches)
+
+        # load all input node id and stor it into a list of tensor
+        tic = time.time()
+        input_nodes_list = []
+        for bid in range(startid, endid):
+            input_nodes_list.append(torch.load(f"{output_dir}/in-nid-{bid}.pt"))
+        time_record[0] += time.time() - tic
+
+        ## read all data features in segment granularity using LoadFeats_Direct(const std::string& file_path,int64_t num_indices, int64_t feature_dim)
+        start_indices=0
+        all_indices=dataset.num_nodes
+        step_indices=dataset.num_nodes//num_seg_dataset + 1
+        current_indices=0
+        ## use this API 
+        # torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
+        #                                      int64_t previously_read_indices, int64_t num_indices,
+        #                                      int64_t feature_dim) 
+        
+        ## init a table with a size of dataset.num_nodes (torch.tensor)
+        table=torch.full((dataset.num_nodes,), 0, dtype=bool)
+        for segid in range(num_seg_dataset):
+            tic = time.time()
+            if segid==num_seg_dataset-1:
+                step_indices=all_indices-current_indices
+            with utils.with_profile_time_print(f"Load Packed Feats Time {segid}: "):
+                features = torch.ops.offgs._CAPI_LoadFeats_Direct_lseek(dataset.features_path, current_indices, step_indices, dataset.num_features)
+            ## use dataset.mmap_features to do sanity check
+            
+            features_sanity=dataset.mmap_features[current_indices:current_indices+step_indices]
+            table[current_indices:current_indices+step_indices]=True
+            table[cache_indices]=False
+            nonzero_count = torch.count_nonzero(table)
+            slice_time=[]
+            save_time=[]
+            for input_node in input_nodes_list:
+                # input_node=input_node.to(device)
+                with utils.with_profile_time(slice_time):
+                    true_indices = input_node[table[input_node]]
+                    condition = (true_indices >= current_indices) & (true_indices <= current_indices + step_indices)
+                    ## slice the true incides infeatures
+                    assert condition.all(), "Some true_indices are out of the expected range"
+                    features_slice=features[true_indices-current_indices]
+
+                with utils.with_profile_time(save_time):
+                    torch.ops.offgs._CAPI_SaveFeats(
+                        f"{aux_dir}/feat/train-aux-{input_node}-{segid}.bin", features_slice
+                    )
+            table[current_indices:current_indices+step_indices]=False
+
+            ## print sum slice time
+            print(f"Sum Slice Time {segid}: {sum(slice_time)}")
+            ## print sum save time
+            print(f"Sum Save Time {segid}: {sum(save_time)}")
+            
+            ## free features
+
+            # torch.ops.offgs._CAPI_FreeTensor(features)
+            
+            # input_node=input_node.to(device)
+            # (
+            #     cold_nodes,
+            #     rev_cold_idx,
+            #     hot_nodes,
+            #     rev_hot_idx,
+            # ) = torch.ops.offgs._CAPI_QueryHashMap(input_node, key, value)
+            # print(f'cold nodes shape: {cold_nodes.shape}')
+            
+            assert torch.all(features==features_sanity)
+            
+            ## debug auto exit
+            
+            
+            current_indices+=step_indices
+        print('end of load features')
+            
+        
+        
+        exit(0)
+
+
+        for bid in range(startid, endid):
+            print(f"Processing Batch {bid} in Segment {segid}...")
+            ## print time record 8
+            print(f"Load Packed Feats Time: {time_record[8]:.3f}\t")
+            # calculate cold nodes
+            tic = time.time()
+            input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
+
+            (
+                cold_nodes,
+                rev_cold_idx,
+                hot_nodes,
+                rev_hot_idx,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+            ## hotnodes local id in CPU cache
+            mem_loc = address_table[hot_nodes.cpu()].to(torch.int64)
+
+            (
+                disk_cold,
+                disk_rev_cold_idx,
+                disk_hot,
+                disk_rev_hot_idx,
+            ) = torch.ops.offgs._CAPI_QueryHashMap(cold_nodes, disk_key, disk_value)
+            disk_loc = disk_table[disk_hot.cpu()]
+            total_packed_nodes += disk_cold.numel()
+            time_record[7] += time.time() - tic
+
+            # load packed features
+            tic = time.time()
+            # packed_feats: torch.Tensor = features[disk_cold.cpu()]
+            # packed_feats = torch.ops.offgs._CAPI_GatherMemMap(features, cold_nodes.cpu(), dataset.num_features)
+            packed_feats = torch.ops.offgs._CAPI_GatherPReadDirect(
+                dataset.features_path, disk_cold.cpu(), dataset.num_features
+            )
+            print(f'disk cold shape: {disk_cold.shape}')
+            time_record[8] += time.time() - tic
+
+            # save meta data
+            tic = time.time()
+            aux_meta_data = [
+                disk_cold.cpu(),
+                disk_rev_cold_idx.cpu(),
+                disk_loc.cpu(),
+                disk_rev_hot_idx.cpu(),
+                rev_cold_idx.cpu(),
+                mem_loc.cpu(),
+                rev_hot_idx.cpu(),
+            ]
+            torch.save(aux_meta_data, f"{aux_dir}/meta_data/train-aux-meta-{bid}.pt")
+            time_record[9] += time.time() - tic
+
+            # save packed features
+            tic = time.time()
+            torch.ops.offgs._CAPI_SaveFeats(
+                f"{aux_dir}/feat/train-aux-{bid}.bin", packed_feats
+            )
+            # if disk_cold.numel() > 0:
+            #     mmap_packed_feats = np.memmap(
+            #         f"{aux_dir}/feat/train-aux-{bid}.npy",
+            #         mode="w+",
+            #         shape=packed_feats.numel(),
+            #         dtype=np.float32,
+            #     )
+            #     mmap_packed_feats[:] = packed_feats.flatten()
+            #     mmap_packed_feats.flush()
+            time_record[10] += time.time() - tic
+
+    total_time = cache_init_time + np.sum(time_record)
+    print(
+        f"Init Cache Time: {cache_init_time:.3f}\t"
+        f"Cal Counts Time: {time_record[0]:.3f}\t"
+        f"Build Disk Cache Time: {time_record[1]:.3f}\t"
+        f"Build Bipartite Graph Time: {time_record[2]:.3f}\t"
+        f"Cal MinHash Time: {time_record[3]:.3f}\t"
+        f"Reorder Time: {time_record[4]:.3f}\t"
+        f"Load Disk Cache Time: {time_record[5]:.3f}\t"
+        f"Save Disk Cache Time: {time_record[6]:.3f}\t"
+        f"Cal Cold Nodes Time: {time_record[7]:.3f}\t"
+        f"Load Packed Feats Time: {time_record[8]:.3f}\t"
+        f"Save Meta Data Time: {time_record[9]:.3f}\t"
+        f"Save Packed Feats Time: {time_record[10]:.3f}\t"
+        f"Total Time: {total_time:.3f}"
+    )
+
+    with open(args.log, "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.ratio,
+            f"{args.feat_cache_size:g}",
+            args.disk_cache_num,
+            args.segment_size,
+            total_packed_nodes,
+            round(cache_init_time, 2),
+        ]
+        for i in range(len(time_record)):
+            log_info.append(round(time_record[i], 2))
+        log_info.append(round(total_time, 2))
+        writer.writerow(log_info)
+
+    
+    
+    exit(0)
+    return
 def run(dataset: OffgsDataset, args):
     device = torch.device(f"cuda:{args.device}")
 
@@ -45,7 +249,7 @@ def run(dataset: OffgsDataset, args):
         else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
     )
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
-
+    args.segment_size=num_batches
     tic = time.time()
     num_entries = min(
         args.feat_cache_size // (4 * features.shape[1]),
@@ -71,9 +275,20 @@ def run(dataset: OffgsDataset, args):
     num_segments = (num_batches + args.segment_size - 1) // args.segment_size
     print(f"Num Segments: {num_segments}, Segment Size: {args.segment_size}")
 
-    
     time_record = [0] * 11
     total_packed_nodes = 0
+    
+    new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entries, cache_indices, device, time_record, total_packed_nodes, address_table, key, value,cache_init_time)
+    
+
+    
+    # with utils.with_profile_time_print("init cache C++"):
+    #     cpu_cache_feat=torch.ops.offgs._CAPI_GatherPReadDirect(dataset.features_path, cache_indices, dataset.num_features)
+    # ## save cache features
+    # with utils.with_profile_time_print("save cache"):
+    #     torch.ops.offgs._CAPI_SaveFeats(f"{aux_dir}/cached_feats.bin", cpu_cache_feat)
+    
+
     for segid in trange(num_segments, ncols=100):
         startid = segid * args.segment_size
         endid = min((segid + 1) * args.segment_size, num_batches)
@@ -172,10 +387,9 @@ def run(dataset: OffgsDataset, args):
         time_record[6] += time.time() - tic
 
         for bid in range(startid, endid):
-            print(f"Processing Batch {bid} / {num_batches}")
-
-            ## print time 8
-            print(f'time_record[8]: {time_record[8]}')
+            print(f"Processing Batch {bid} in Segment {segid}...")
+            ## print time record 8
+            print(f"Load Packed Feats Time: {time_record[8]:.3f}\t")
             # calculate cold nodes
             tic = time.time()
             input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
