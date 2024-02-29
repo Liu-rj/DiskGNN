@@ -28,7 +28,6 @@ def train(
     subg_dir: str,
     aux_dir: str,
 ):
-    num_seg_dataset=8
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
@@ -134,26 +133,60 @@ def train(
                 rev_hot_idx,
             ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
             meta_load += time.time() - tic
-            concat_indices=[]
-            concat_features=[]
-            for segid in range(num_seg_dataset):
-                true_pos = torch.load(f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt")
-                feat=torch.ops.offgs._CAPI_LoadFeats_Direct(
-                    f"{aux_dir}/feat/train-aux-{i}-{segid}.bin",
-                    true_pos.numel(),
+
+            tic = time.time()
+            num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
+            disk_feats = torch.empty(
+                (num_disk, dataset.num_features),
+                dtype=torch.float32,
+                pin_memory=True,
+            )
+            feat_create += time.time() - tic
+
+            tic = time.time()
+            if disk_cold.numel() > 0:
+                cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                    f"{aux_dir}/feat/train-aux-{i}.bin",
+                    disk_cold.numel(),
                     dataset.num_features,
                 )
-                concat_indices.append(true_pos)
-                concat_features.append(feat)
-            concat_indices=torch.cat(concat_indices)
-            concat_features=torch.cat(concat_features,dim=0)
-            num_input = concat_indices.numel() + mem_loc.numel()
+                disk_feats[disk_rev_cold_idx] = cold_feats
+            cold_load += time.time() - tic
+
+            tic = time.time()
+            (
+                load_time,
+                copy_time,
+                unique_time,
+                alloc_time,
+                free_time,
+            ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
+                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
+                disk_feats,
+                disk_loc,
+                disk_rev_hot_idx,
+                dataset.num_features,
+            )
+            cache_load += time.time() - tic
+            disk_page_unique += unique_time
+            page_alloc += alloc_time
+            disk_cache_load += load_time
+            disk_cache_copy += copy_time
+            disk_page_free += free_time
+            io_traffic = disk_cold.numel() + torch.unique(disk_loc // 8).numel() * 8
+            info_recorder[7] += io_traffic  # cold_feats_num
+            total_disk_cold += disk_cold.numel()
+            total_disk_cache += torch.unique(disk_loc // 8).numel() * 8
+
+            tic = time.time()
+            num_input = num_disk + mem_loc.numel()
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
                 device=device,
             )
-            x[concat_indices] = concat_features.to(device)
+            if num_disk > 0:
+                x[rev_cold_idx] = disk_feats.to(device)
             torch.ops.offgs._CAPI_GatherInGPU(
                 x,
                 rev_hot_idx.to(device),
@@ -161,7 +194,6 @@ def train(
                 gpu_cached_feats,
                 mem_loc.to(device),
             )
-
             torch.cuda.synchronize()
             info_recorder[2] += time.time() - tic  # feat assemble
             info_recorder[8] += x.shape[0]  # input node num
@@ -188,6 +220,10 @@ def train(
             torch.cuda.synchronize()
             info_recorder[5] += time.time() - tic
 
+            tic = time.time()
+            if disk_cold.numel() > 0:
+                torch.ops.offgs._CAPI_FreeTensor(cold_feats)
+            feat_free += time.time() - tic
 
         info_recorder[1] += (
             meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
@@ -400,7 +436,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
-    args.debug = True
     print(args)
     args.cpu_cache_size = int(args.cpu_cache_size)
     args.gpu_cache_size = int(args.gpu_cache_size)

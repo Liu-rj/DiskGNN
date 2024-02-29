@@ -66,10 +66,17 @@ def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entri
             table[cache_indices]=False
             slice_time=[]
             save_time=[]
+            
             for i,input_node in enumerate(input_nodes_list):
                 # input_node=input_node.to(device)
                 with utils.with_profile_time(slice_time):
-                    true_indices = input_node[table[input_node]]
+                    ## this is the correct node id to load from disk (not in CPU cache)
+                    # Boolean mask to identify the true indices within input_node
+                    mask = table[input_node]
+                    # Find the indices of the true values within input_node
+                    true_positions = torch.nonzero(mask, as_tuple=True)[0]
+                    true_indices = input_node[mask]
+                    assert true_indices.numel() == true_positions.numel()
                     condition = (true_indices >= current_indices) & (true_indices <= current_indices + step_indices)
                     ## slice the true incides infeatures
                     assert condition.all(), "Some true_indices are out of the expected range"
@@ -79,6 +86,10 @@ def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entri
                     torch.ops.offgs._CAPI_SaveFeats(
                         f"{aux_dir}/feat/train-aux-{i}-{segid}.bin", features_slice
                     )
+                    ## save true_positions
+                    torch.save(true_positions, f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt")
+                    ## save input node id aka true_indices and this can be simplified or just delete
+                    torch.save(true_indices, f"{aux_dir}/feat/train-aux-true-indices-{i}-{segid}.pt")
             table[current_indices:current_indices+step_indices]=False
             print(f'all_len: {all_len}')
             ## print sum slice time
@@ -224,10 +235,10 @@ def run(dataset: OffgsDataset, args):
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
     output_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     output_dir = os.path.join(args.store_path, output_dir)
-    aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
+    aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
 
     if not os.path.exists(aux_dir):
-        os.mkdir(aux_dir)
+        os.makedirs(aux_dir)
     if not os.path.exists(f"{aux_dir}/feat"):
         os.mkdir(f"{aux_dir}/feat")
     if not os.path.exists(f"{aux_dir}/meta_data"):
