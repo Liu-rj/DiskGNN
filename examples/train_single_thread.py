@@ -89,6 +89,8 @@ def train(
                 use_uva=True,
             )
 
+    torch.ops.offgs._CAPI_Init_iouring()
+
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
     epoch_info_recorder = [[] for i in range(10)]
     feat_load_decompose = [[] for i in range(13)]
@@ -145,6 +147,7 @@ def train(
             if disk_cold.numel() > 0:
                 cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
                     f"{aux_dir}/feat/train-aux-{i}.bin",
+                    f"{aux_dir}/feat/train-aux-{i}.bin",
                     disk_cold.numel(),
                     dataset.num_features,
                 )
@@ -158,7 +161,7 @@ def train(
                 unique_time,
                 alloc_time,
                 free_time,
-            ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP(
+            ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
                 f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
                 disk_feats,
                 disk_loc,
@@ -327,6 +330,8 @@ def train(
         ):
             feat_load_decompose[i].append(info)
 
+    torch.ops.offgs._CAPI_Exit_iouring()
+
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
@@ -337,6 +342,8 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
+            args.disk_cache_num,
+            args.segment_size,
             args.model,
             args.num_epoch,
             best_epoch,
@@ -379,7 +386,7 @@ def start(args):
 
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.dir, subg_dir)
-    aux_dir = f"{subg_dir}/cache-size-{total_cache_size}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
@@ -421,6 +428,7 @@ if __name__ == "__main__":
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
     parser.add_argument("--gpu-cache-size", type=float, default=1e10)
+    parser.add_argument("--disk-cache-num", type=float, default=1e6)
     parser.add_argument("--segment-size", type=int, default=100)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)

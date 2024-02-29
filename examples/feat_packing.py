@@ -20,10 +20,10 @@ def run(dataset: OffgsDataset, args):
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
     output_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     output_dir = os.path.join(args.store_path, output_dir)
-    aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size}"
+    aux_dir = f"{output_dir}/cache-size-{args.feat_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
 
     if not os.path.exists(aux_dir):
-        os.mkdir(aux_dir)
+        os.makedirs(aux_dir)
     if not os.path.exists(f"{aux_dir}/feat"):
         os.mkdir(f"{aux_dir}/feat")
     if not os.path.exists(f"{aux_dir}/meta_data"):
@@ -45,6 +45,7 @@ def run(dataset: OffgsDataset, args):
         else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
     )
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
+    segment_size = num_batches if args.segment_size == -1 else args.segment_size
 
     tic = time.time()
     num_entries = min(
@@ -68,15 +69,17 @@ def run(dataset: OffgsDataset, args):
     )
 
     assert args.disk_cache_num + num_entries < dataset.num_nodes
-    num_segments = (num_batches + args.segment_size - 1) // args.segment_size
-    print(f"Num Segments: {num_segments}, Segment Size: {args.segment_size}")
+    num_segments = (num_batches + segment_size - 1) // segment_size
+    print(
+        f"Num Segments: {num_segments}, Segment Size: {segment_size} ({args.segment_size})"
+    )
 
     
     time_record = [0] * 11
     total_packed_nodes = 0
     for segid in trange(num_segments, ncols=100):
-        startid = segid * args.segment_size
-        endid = min((segid + 1) * args.segment_size, num_batches)
+        startid = segid * segment_size
+        endid = min((segid + 1) * segment_size, num_batches)
 
         # calculate popularity (node counts) for packed features in each segment
         tic = time.time()

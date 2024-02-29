@@ -1,5 +1,6 @@
 #include <c10/util/Logging.h>
 #include <fcntl.h>
+#include <liburing.h>
 #include <omp.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -9,10 +10,34 @@
 #include <thread>
 
 #include "load.h"
+#include "state.h"
 
 #define ALIGNMENT 4096
+#define RING_LEN 1024
 
 namespace offgs {
+void Init_iouring() {
+  auto* uring_state = IOUringState::Global();
+  auto& ring_arr = uring_state->ring_arr;
+  auto& ring_queue = uring_state->ring_queue;
+
+  for (int i = 0; i < NUM_RING; i++) {
+    int ret = io_uring_queue_init(RING_LEN, &ring_arr[i], 0);
+    if (ret) {
+      LOG(FATAL) << "Unable to setup io_uring: " << strerror(-ret);
+    }
+    ring_queue.push(ring_arr[i]);
+  }
+}
+
+void Exit_iouring() {
+  auto* uring_state = IOUringState::Global();
+
+  for (int i = 0; i < NUM_RING; i++) {
+    io_uring_queue_exit(&uring_state->ring_arr[i]);
+  }
+}
+
 std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
                                      int64_t feature_dim, int64_t num_align,
                                      int64_t omp_threads) {
@@ -307,6 +332,125 @@ std::vector<double> LoadDiskCache_Direct_OMP(const std::string& file_path,
   close(fd);
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  free(read_buffer);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto free_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  return {load_time, copy_time, unique_time, alloc_time, free_time};
+}
+
+std::vector<double> LoadDiskCache_Direct_OMP_iouring(
+    const std::string& file_path, const torch::Tensor& out_data,
+    const torch::Tensor& in_idx, const torch::Tensor& out_idx,
+    int64_t feature_dim) {
+  struct timespec start, end;
+
+  auto* uring_state = IOUringState::Global();
+  auto& ring_queue = uring_state->ring_queue;
+  assert(in_idx.numel() == out_idx.numel());
+  auto num_feat_per_page =
+      static_cast<int64_t>((ALIGNMENT / sizeof(float)) / feature_dim);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  auto ret_tensors = torch::_unique2(
+      (in_idx / num_feat_per_page).to(torch::kInt64), true, true);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto unique_time = (end.tv_sec - start.tv_sec) +
+                     (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  auto page_ids = std::get<0>(ret_tensors),
+       inverse_idx = std::get<1>(ret_tensors);
+  int num_pages = page_ids.numel();
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  float* read_buffer = (float*)aligned_alloc(ALIGNMENT, num_pages * ALIGNMENT);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto alloc_time = (end.tv_sec - start.tv_sec) +
+                    (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  // const auto processor_count = std::thread::hardware_concurrency();
+  auto omp_threads = std::min(in_idx.numel(), static_cast<int64_t>(64));
+
+  auto page_ids_ptr = page_ids.data_ptr<int64_t>(),
+       inverse_idx_ptr = inverse_idx.data_ptr<int64_t>(),
+       in_idx_ptr = in_idx.data_ptr<int64_t>(),
+       out_idx_ptr = out_idx.data_ptr<int64_t>();
+  auto out_data_ptr = out_data.data_ptr<float>();
+
+  int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
+
+  if (ring_queue.size() != NUM_RING) {
+    LOG(FATAL) << "Ring queue size is not correct."
+               << " Actual: " << ring_queue.size() << " Expected: " << NUM_RING;
+  }
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+#pragma omp parallel for num_threads(NUM_RING)
+  for (int i = 0; i < num_pages; i += RING_LEN) {
+    struct io_uring ring;
+
+#pragma omp critical
+    {
+      while (ring_queue.empty())
+        ;
+      ring = ring_queue.front();
+      ring_queue.pop();
+    }
+
+    int r = std::min(num_pages, i + RING_LEN);
+    struct io_uring_sqe* sqe;
+    for (int j = i; j < r; j++) {
+      sqe = io_uring_get_sqe(&ring);
+      if (!sqe) {
+        LOG(FATAL) << "Could not get SQE."
+                   << " i: " << i << " j: " << j;
+      }
+      io_uring_prep_read(sqe, fd, read_buffer + (j * ALIGNMENT) / sizeof(float),
+                         ALIGNMENT, page_ids_ptr[j] * ALIGNMENT);
+      if ((j + 1) % 64 == 0 || j == r - 1) {
+        io_uring_submit(&ring);
+      }
+    }
+
+    int finish_num = 0;
+    while (finish_num < r - i) {
+      struct io_uring_cqe* cqe;
+      int ret = io_uring_wait_cqe(&ring, &cqe);
+      if (ret < 0) {
+        LOG(FATAL) << "Error waiting for completion: " << strerror(-ret);
+      }
+      struct io_uring_cqe* cqes[RING_LEN];
+      int cqecount = io_uring_peek_batch_cqe(&ring, cqes, RING_LEN);
+      if (cqecount == -1) {
+        LOG(FATAL) << "Error peeking batch data";
+      }
+      io_uring_cq_advance(&ring, cqecount);
+      finish_num += cqecount;
+    }
+
+#pragma omp critical
+    { ring_queue.push(ring); }
+  }
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto load_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+#pragma omp parallel for num_threads(omp_threads)
+  for (int i = 0; i < in_idx.numel(); i++) {
+    auto in_offset = (inverse_idx_ptr[i] * ALIGNMENT) / sizeof(float);
+    auto residual = (in_idx_ptr[i] % num_feat_per_page) * feature_dim;
+    auto out_offset = out_idx_ptr[i] * feature_dim;
+    memcpy(out_data_ptr + out_offset, read_buffer + in_offset + residual,
+           feature_dim * sizeof(float));
+  }
+  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  auto copy_time = (end.tv_sec - start.tv_sec) +
+                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  close(fd);
   free(read_buffer);
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   auto free_time = (end.tv_sec - start.tv_sec) +
