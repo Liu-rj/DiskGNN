@@ -198,3 +198,10 @@ def gen_train(ratio=0.01, name="train_001.pth"):
     train_001 = torch.randperm(num_nodes)[: int(num_nodes * ratio)]
     print(f"Ratio: {train_001.numel() / num_nodes}")
     torch.save(train_001, os.path.join(dataset_path, name))
+
+
+def kill_proc(p):
+    try:
+        p.terminate()
+    except Exception:
+        pass
