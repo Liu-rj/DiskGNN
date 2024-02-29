@@ -28,7 +28,7 @@ std::vector<double> LoadDiskCache_Direct_OMP(const std::string& file_path,
                                              const torch::Tensor& out_idx,
                                              int64_t feature_dim);
 
-std::vector<double> LoadDiskCache_Direct_OMP_iouring(
+void LoadDiskCache_Direct_OMP_iouring(
     const std::string& file_path, const torch::Tensor& out_data,
     const torch::Tensor& in_idx, const torch::Tensor& out_idx,
     int64_t feature_dim);

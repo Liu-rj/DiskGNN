@@ -27,10 +27,17 @@ list(GET TORCH_PREFIX_VER 1 TORCH_VER)
 message(STATUS "Configuring for PyTorch ${TORCH_VER}")
 set(Torch_DIR "${TORCH_PREFIX}/Torch")
 find_package(Torch REQUIRED)
-
 list(APPEND OFFGS_LINKER_LIBS ${TORCH_LIBRARIES} uring)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${TORCH_C_FLAGS}")
 message(STATUS "Torch dir: ${Torch_DIR}")
+
+# Python
+find_package(Python COMPONENTS Interpreter Development REQUIRED)
+message(STATUS "Python include dir: ${Python_INCLUDE_DIRS}")
+message(STATUS "Python libraries: ${Python_LIBRARIES}")
+list(APPEND OFFGS_INCLUDES ${Python_INCLUDE_DIRS})
+list(APPEND OFFGS_LINKER_LIBS ${Python_LIBRARIES})
+
 message(STATUS "OFFGS linker: ${OFFGS_LINKER_LIBS}")
 
 file(GLOB offgs_src
