@@ -53,20 +53,20 @@ def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entri
         ## init a table with a size of dataset.num_nodes (torch.tensor)
         table=torch.full((dataset.num_nodes,), 0, dtype=bool)
         for segid in range(num_seg_dataset):
+            all_len=0
             tic = time.time()
             if segid==num_seg_dataset-1:
                 step_indices=all_indices-current_indices
-            with utils.with_profile_time_print(f"Load Packed Feats Time {segid}: "):
+            with utils.with_profile_time_print("Load Feats Direct"):
                 features = torch.ops.offgs._CAPI_LoadFeats_Direct_lseek(dataset.features_path, current_indices, step_indices, dataset.num_features)
             ## use dataset.mmap_features to do sanity check
             
             features_sanity=dataset.mmap_features[current_indices:current_indices+step_indices]
             table[current_indices:current_indices+step_indices]=True
             table[cache_indices]=False
-            nonzero_count = torch.count_nonzero(table)
             slice_time=[]
             save_time=[]
-            for input_node in input_nodes_list:
+            for i,input_node in enumerate(input_nodes_list):
                 # input_node=input_node.to(device)
                 with utils.with_profile_time(slice_time):
                     true_indices = input_node[table[input_node]]
@@ -74,13 +74,13 @@ def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entri
                     ## slice the true incides infeatures
                     assert condition.all(), "Some true_indices are out of the expected range"
                     features_slice=features[true_indices-current_indices]
-
+                all_len+=features_slice.numel()
                 with utils.with_profile_time(save_time):
                     torch.ops.offgs._CAPI_SaveFeats(
-                        f"{aux_dir}/feat/train-aux-{input_node}-{segid}.bin", features_slice
+                        f"{aux_dir}/feat/train-aux-{i}-{segid}.bin", features_slice
                     )
             table[current_indices:current_indices+step_indices]=False
-
+            print(f'all_len: {all_len}')
             ## print sum slice time
             print(f"Sum Slice Time {segid}: {sum(slice_time)}")
             ## print sum save time

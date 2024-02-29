@@ -206,8 +206,10 @@ torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
   auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
   auto all_data = torch::from_blob(read_buffer + extra_bytes_before / sizeof(float), total_size / sizeof(float), options)
       .view({num_indices, feature_dim});
+  // clone all data to avoid memory leak
+  all_data = all_data.clone();
 
-  // free(read_buffer);
+  free(read_buffer);
 
   return all_data;
 }
