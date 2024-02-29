@@ -57,13 +57,17 @@ def train(
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    train_nid = (
-        dataset.split_idx["train"]
-        if args.ratio == 1.0
-        else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
-    )
-    print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
-    size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
+    # train_nid = (
+    #     dataset.split_idx["train"]
+    #     if args.ratio == 1.0
+    #     else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
+    # )
+    # print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
+    # size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
+    train_num = dataset.split_idx["train"].numel()
+    size = (train_num + args.batchsize - 1) // args.batchsize
+    print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
+    pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
 
     if args.debug:
         val_dataloader = DataLoader(
@@ -98,6 +102,12 @@ def train(
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
+        batch_id = []
+        while len(batch_id) < size:
+            permutation = torch.randperm(pool_size).tolist()
+            batch_id += permutation
+        batch_id = batch_id[:size]
+
         tot_loss = 0
         info_recorder = [0] * 9
         torch.cuda.synchronize()
@@ -114,12 +124,10 @@ def train(
         ) = (0, 0, 0, 0, 0)
 
         model.train()
-        for i in trange(size, ncols=100):
+        for i in tqdm(batch_id, ncols=100):
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
-            if args.debug:
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
 
             tic = time.time()
@@ -154,13 +162,7 @@ def train(
             cold_load += time.time() - tic
 
             tic = time.time()
-            (
-                load_time,
-                copy_time,
-                unique_time,
-                alloc_time,
-                free_time,
-            ) = torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
+            torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
                 f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
                 disk_feats,
                 disk_loc,
@@ -168,11 +170,6 @@ def train(
                 dataset.num_features,
             )
             cache_load += time.time() - tic
-            disk_page_unique += unique_time
-            page_alloc += alloc_time
-            disk_cache_load += load_time
-            disk_cache_copy += copy_time
-            disk_page_free += free_time
             io_traffic = disk_cold.numel() + torch.unique(disk_loc // 8).numel() * 8
             info_recorder[7] += io_traffic  # cold_feats_num
             total_disk_cold += disk_cold.numel()
@@ -198,10 +195,9 @@ def train(
             info_recorder[2] += time.time() - tic  # feat assemble
             info_recorder[8] += x.shape[0]  # input node num
             if args.debug:
-                input_feats = gather_pinned_tensor_rows(
-                    features, input_nodes.to(device)
-                )
-                assert torch.allclose(x, input_feats)
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+                input_feats = features[input_nodes].to(device)
+                assert torch.equal(x, input_feats)
 
             tic = time.time()
             blocks = [block.to(device) for block in blocks]
@@ -233,7 +229,7 @@ def train(
             # --- valid ---#
             model.eval()
             valid_correct, valid_tot, val_acc = 0, 0, 0
-            for i, (input_nodes, output_nodes, blocks) in enumerate(
+            for it, (input_nodes, output_nodes, blocks) in enumerate(
                 tqdm(val_dataloader, ncols=100)
             ):
                 blocks = [block.to(device) for block in blocks]
@@ -253,7 +249,7 @@ def train(
             model.eval()
             test_correct, test_tot, test_acc = 0, 0, 0
             if args.dataset != "mag240m":
-                for i, (input_nodes, output_nodes, blocks) in enumerate(
+                for it, (input_nodes, output_nodes, blocks) in enumerate(
                     tqdm(test_dataloader, ncols=100)
                 ):
                     blocks = [block.to(device) for block in blocks]
