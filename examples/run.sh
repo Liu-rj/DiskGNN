@@ -33,7 +33,9 @@ sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cac
 sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cache-size=5e9 --cpu-cache-size=5e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --disk-cache-num 4e6 --segment-size 200
 # sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cache-size=3200000000 --cpu-cache-size=3200000000
 # sudo env PATH=$PATH python train_single_thread.py --dataset=friendster --gpu-cache-size=6400000000 --cpu-cache-size=0
-# sudo env PATH=$PATH python train.py --dataset=friendster --feat-cache-size=6400000000
+sudo env PATH=$PATH python train_multi_thread.py --dataset=friendster --gpu-cache-size=5e9 --cpu-cache-size=5e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --disk-cache-num 0 --segment-size -1
+sudo env PATH=$PATH python train_multi_thread.py --dataset=friendster --gpu-cache-size=5e9 --cpu-cache-size=5e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --disk-cache-num 4e6 --segment-size 200
+sudo env PATH=$PATH python train_multi_process.py --dataset=friendster --gpu-cache-size=5e9 --cpu-cache-size=5e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --disk-cache-num 0 --segment-size -1
 sudo env PATH=$PATH python feat_deduplicate_disk_cache.py --dataset friendster --feat-cache-size 1e10 --store-path /nvme2n1/offgs_dataset --ratio 1.0
 sudo env PATH=$PATH python feat_deduplicate_disk_cache_2.py --dataset friendster --feat-cache-size 1e10 --store-path /nvme2n1/offgs_dataset --ratio 1.0
 # sudo env PATH=$PATH python feat_deduplicate_bucket_subg.py --dataset friendster --feat-cache-size 1e10 --store-path /nvme2n1/offgs_dataset --ratio 1.0

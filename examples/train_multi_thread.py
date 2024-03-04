@@ -38,43 +38,8 @@ def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
             mem_loc,
             rev_hot_idx,
         ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
-        # pack_queue.put((disk_cold, disk_rev_cold_idx, disk_feats))
-        # dc_queue.put((disk_loc, disk_rev_hot_idx, unique_page, inv_idx, disk_feats))
-        # transfer_queue.put((num_disk, mem_loc, rev_cold_idx, rev_hot_idx, disk_feats))
-
         feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
         transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
-
-
-def load_packed_feats(in_queue, out_queue, aux_dir, batch_id, dataset):
-    for i in batch_id:
-        disk_cold, disk_rev_cold_idx, disk_feats = in_queue.get()
-        if disk_cold.numel() > 0:
-            cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                f"{aux_dir}/feat/train-aux-{i}.bin",
-                disk_cold.numel(),
-                dataset.num_features,
-            )
-            disk_feats[disk_rev_cold_idx] = cold_feats
-            torch.ops.offgs._CAPI_FreeTensor(cold_feats)
-        out_queue.put(i)
-
-
-def load_disk_cache(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
-    torch.ops.offgs._CAPI_Init_iouring()
-    for i in batch_id:
-        disk_loc, disk_rev_hot_idx, unique_page, inv_idx, disk_feats = in_queue.get()
-        torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-            f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
-            disk_feats,
-            disk_loc,
-            disk_rev_hot_idx,
-            unique_page,
-            inv_idx,
-            dataset.num_features,
-        )
-        out_queue.put(i)
-    torch.ops.offgs._CAPI_Exit_iouring()
 
 
 def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
@@ -120,13 +85,6 @@ def feat_transfer(
     device,
 ):
     for i in batch_id:
-        # num_disk, mem_loc, rev_cold_idx, rev_hot_idx, disk_feats = in_queue.get()
-        # pack_task = pack_task_q.get()
-        # disk_cache_task = dc_task_q.get()
-        # if pack_task != i or disk_cache_task != i:
-        #     print("Error")
-        #     exit()
-
         rev_cold_idx, mem_loc, rev_hot_idx = in_queue.get()
         disk_feats = disk_feats_queue.get()
         num_disk = rev_cold_idx.numel()
@@ -233,14 +191,11 @@ def train(
         threads = []
         (
             graph_queue,
-            # pack_queue,
-            # dc_queue,
             feat_load_queue,
             disk_feat_queue,
             transfer_queue,
             feature_queue,
         ) = [queue.Queue(maxsize=2) for i in range(5)]
-        # pack_task_q, dc_task_q = queue.Queue(maxsize=2), queue.Queue(maxsize=2)
 
         threads.append(
             threading.Thread(
@@ -257,29 +212,6 @@ def train(
                 daemon=True,
             )
         )
-
-        # threads.append(
-        #     threading.Thread(
-        #         target=load_packed_feats,
-        #         args=(pack_queue, pack_task_q, aux_dir, batch_id, dataset),
-        #         daemon=True,
-        #     )
-        # )
-
-        # threads.append(
-        #     threading.Thread(
-        #         target=load_disk_cache,
-        #         args=(
-        #             dc_queue,
-        #             dc_task_q,
-        #             aux_dir,
-        #             batch_id,
-        #             dataset,
-        #             args.segment_size,
-        #         ),
-        #         daemon=True,
-        #     )
-        # )
 
         threads.append(
             threading.Thread(
@@ -423,7 +355,7 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
-            args.disk_cache_num,
+            f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
             args.num_epoch,

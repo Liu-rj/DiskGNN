@@ -337,7 +337,7 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
-            args.disk_cache_num,
+            f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
             args.num_epoch,
