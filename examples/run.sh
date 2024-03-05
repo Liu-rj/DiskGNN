@@ -97,16 +97,6 @@
 # python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/rjliu/dataset/igb_full --store-path /nvme1n1/offgs_dataset
 
 
-## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-sudo /opt/conda/envs/SSD_GNN/bin/python sampling.py --dataset friendster --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset 
-sudo /opt/conda/envs/SSD_GNN/bin/python feat_packing.py --dataset friendster --feat-cache-size=3000000000 --store-path /nvme1n1/offgs_dataset 
-sudo /opt/conda/envs/SSD_GNN/bin/python train_single_thread.py --dataset friendster --gpu-cache-size=500000000 --cpu-cache-size=2500000000 --dir /nvme1n1/offgs_dataset 
-
-
-sudo /opt/conda/envs/SSD_GNN/bin/python feat_packing.py --dataset friendster --feat-cache-size 1e10 --store-path /nvme1n1/offgs_dataset --ratio 1.0 --disk-cache-num 4e6 --segment-size 200
-sudo /opt/conda/envs/SSD_GNN/bin/python  train_single_thread.py --dataset=friendster --gpu-cache-size=5e9 --cpu-cache-size=5e9 --dir /nvme1n1/offgs_dataset --ratio 1.0 --segment-size 200
-
-
 
 ## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # sudo /opt/conda/envs/SSD_GNN/bin/python sampling.py --dataset igb-full --fanout="10,10,10" --store-path /nvme1n1/offgs_dataset --ratio 0.2
