@@ -38,3 +38,18 @@ sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-
 ```shell
 sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=2e8
 ```
+
+### for accelerate preprocessing
+previous steps are the same
+
+* Cold feature packing
+
+```shell
+python /home/ubuntu/OfflineSampling/examples/feat_map_reduce_packing.py
+```
+
+* Online training
+
+```shell
+python /home/ubuntu/OfflineSampling/examples/train_single_mapreduce.py
+```

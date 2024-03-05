@@ -10,8 +10,176 @@ import time
 import json
 from offgs.dataset import OffgsDataset
 import csv
+import utils
 
 import offgs
+
+
+def init_cache(args, dataset, cached_nodes):
+
+    device = torch.device(f"cuda:{args.device}")
+
+    cpu_cached_feats = torch.empty(
+        (cached_nodes.numel(), dataset.num_features), dtype=torch.float32
+    )
+    cpu_cached_feats[:] = dataset.mmap_features[cached_nodes]
+
+    return cpu_cached_feats
+
+
+def new_preprocessing(
+    args,
+    dataset,
+    output_dir,
+    aux_dir,
+    num_batches,
+    num_entries,
+    cache_indices,
+    device,
+    time_record,
+    total_packed_nodes,
+    address_table,
+    key,
+    value,
+    cache_init_time,
+):
+    num_segments = (num_batches + args.segment_size - 1) // args.segment_size
+    on_demand_load = False
+    num_seg_dataset = 8
+    for segid in trange(num_segments, ncols=100):
+        startid = segid * args.segment_size
+        endid = min((segid + 1) * args.segment_size, num_batches)
+
+        # load all input node id and stor it into a list of tensor
+        tic = time.time()
+        input_nodes_list = []
+        for bid in range(startid, endid):
+            input_nodes_list.append(torch.load(f"{output_dir}/in-nid-{bid}.pt"))
+        time_record[0] += time.time() - tic
+
+        all_indices = dataset.num_nodes
+        step_indices = dataset.num_nodes // num_seg_dataset + 1
+        current_indices = 0
+
+        ## init a table with a size of dataset.num_nodes (torch.tensor)
+        table = torch.full((dataset.num_nodes,), 0, dtype=bool)
+        for segid in range(num_seg_dataset):
+            all_len = 0
+            tic = time.time()
+            if segid == num_seg_dataset - 1:
+                step_indices = all_indices - current_indices
+            with utils.with_profile_time_print("Load Feats Direct"):
+                features = torch.ops.offgs._CAPI_LoadFeats_Direct_lseek(
+                    dataset.features_path,
+                    current_indices,
+                    step_indices,
+                    dataset.num_features,
+                )
+            features_sanity = dataset.mmap_features[
+                current_indices : current_indices + step_indices
+            ]
+            table[current_indices : current_indices + step_indices] = True
+            table[cache_indices] = False
+            slice_time = []
+            save_time = []
+            for i, input_node in enumerate(input_nodes_list):
+                with utils.with_profile_time(slice_time):
+                    ## this is the correct node id to load from disk (not in CPU cache)
+                    # Boolean mask to identify the true indices within input_node
+                    if on_demand_load == True:
+                        mask = table[torch.load(f"{output_dir}/in-nid-{i}.pt")]
+                    else:
+                        mask = table[input_node]
+                    # Find the indices of the true values within input_node
+                    true_positions = torch.nonzero(mask, as_tuple=True)[0]
+                    true_indices = input_node[mask]
+                    assert true_indices.numel() == true_positions.numel()
+                    condition = (true_indices >= current_indices) & (
+                        true_indices <= current_indices + step_indices
+                    )
+                    ## slice the true incides infeatures
+                    assert (
+                        condition.all()
+                    ), "Some true_indices are out of the expected range"
+                    features_slice = features[true_indices - current_indices]
+                all_len += features_slice.numel()
+                with utils.with_profile_time(save_time):
+                    torch.ops.offgs._CAPI_SaveFeats(
+                        f"{aux_dir}/feat/train-aux-{i}-{segid}.bin", features_slice
+                    )
+                    ## save true_positions
+                    torch.save(
+                        true_positions,
+                        f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt",
+                    )
+                    ## save input node id aka true_indices and this can be simplified or just delete
+                    torch.save(
+                        true_indices,
+                        f"{aux_dir}/feat/train-aux-true-indices-{i}-{segid}.pt",
+                    )
+            table[current_indices : current_indices + step_indices] = False
+            print(f"all_len: {all_len}")
+            ## print sum slice time
+            print(f"Sum Slice Time {segid}: {sum(slice_time)}")
+            ## print sum save time
+            print(f"Sum Save Time {segid}: {sum(save_time)}")
+
+            ## free features
+
+            # torch.ops.offgs._CAPI_FreeTensor(features)
+
+            # input_node=input_node.to(device)
+            # (
+            #     cold_nodes,
+            #     rev_cold_idx,
+            #     hot_nodes,
+            #     rev_hot_idx,
+            # ) = torch.ops.offgs._CAPI_QueryHashMap(input_node, key, value)
+            # print(f'cold nodes shape: {cold_nodes.shape}')
+
+            assert torch.all(features == features_sanity)
+            current_indices += step_indices
+        print("end of load features")
+
+        exit(0)
+
+    total_time = cache_init_time + np.sum(time_record)
+    print(
+        f"Init Cache Time: {cache_init_time:.3f}\t"
+        f"Cal Counts Time: {time_record[0]:.3f}\t"
+        f"Build Disk Cache Time: {time_record[1]:.3f}\t"
+        f"Build Bipartite Graph Time: {time_record[2]:.3f}\t"
+        f"Cal MinHash Time: {time_record[3]:.3f}\t"
+        f"Reorder Time: {time_record[4]:.3f}\t"
+        f"Load Disk Cache Time: {time_record[5]:.3f}\t"
+        f"Save Disk Cache Time: {time_record[6]:.3f}\t"
+        f"Cal Cold Nodes Time: {time_record[7]:.3f}\t"
+        f"Load Packed Feats Time: {time_record[8]:.3f}\t"
+        f"Save Meta Data Time: {time_record[9]:.3f}\t"
+        f"Save Packed Feats Time: {time_record[10]:.3f}\t"
+        f"Total Time: {total_time:.3f}"
+    )
+
+    with open(args.log, "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.ratio,
+            f"{args.feat_cache_size:g}",
+            args.disk_cache_num,
+            args.segment_size,
+            total_packed_nodes,
+            round(cache_init_time, 2),
+        ]
+        for i in range(len(time_record)):
+            log_info.append(round(time_record[i], 2))
+        log_info.append(round(total_time, 2))
+        writer.writerow(log_info)
+
+    exit(0)
+    return
 
 
 def run(dataset: OffgsDataset, args):
@@ -45,8 +213,7 @@ def run(dataset: OffgsDataset, args):
         else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
     )
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
-    segment_size = num_batches if args.segment_size == -1 else args.segment_size
-
+    args.segment_size = num_batches
     tic = time.time()
     num_entries = min(
         args.feat_cache_size // (4 * features.shape[1]),
@@ -69,17 +236,32 @@ def run(dataset: OffgsDataset, args):
     )
 
     assert args.disk_cache_num + num_entries < dataset.num_nodes
-    num_segments = (num_batches + segment_size - 1) // segment_size
-    print(
-        f"Num Segments: {num_segments}, Segment Size: {segment_size} ({args.segment_size})"
-    )
+    num_segments = (num_batches + args.segment_size - 1) // args.segment_size
+    print(f"Num Segments: {num_segments}, Segment Size: {args.segment_size}")
 
-    
     time_record = [0] * 11
     total_packed_nodes = 0
+
+    new_preprocessing(
+        args,
+        dataset,
+        output_dir,
+        aux_dir,
+        num_batches,
+        num_entries,
+        cache_indices,
+        device,
+        time_record,
+        total_packed_nodes,
+        address_table,
+        key,
+        value,
+        cache_init_time,
+    )
+
     for segid in trange(num_segments, ncols=100):
-        startid = segid * segment_size
-        endid = min((segid + 1) * segment_size, num_batches)
+        startid = segid * args.segment_size
+        endid = min((segid + 1) * args.segment_size, num_batches)
 
         # calculate popularity (node counts) for packed features in each segment
         tic = time.time()
@@ -175,10 +357,9 @@ def run(dataset: OffgsDataset, args):
         time_record[6] += time.time() - tic
 
         for bid in range(startid, endid):
-            print(f"Processing Batch {bid} / {num_batches}")
-
-            ## print time 8
-            print(f'time_record[8]: {time_record[8]}')
+            print(f"Processing Batch {bid} in Segment {segid}...")
+            ## print time record 8
+            print(f"Load Packed Feats Time: {time_record[8]:.3f}\t")
             # calculate cold nodes
             tic = time.time()
             input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
@@ -209,7 +390,7 @@ def run(dataset: OffgsDataset, args):
             packed_feats = torch.ops.offgs._CAPI_GatherPReadDirect(
                 dataset.features_path, disk_cold.cpu(), dataset.num_features
             )
-            print(f'disk cold shape: {disk_cold.shape}')
+            print(f"disk cold shape: {disk_cold.shape}")
             time_record[8] += time.time() - tic
 
             # save meta data
@@ -285,10 +466,14 @@ if __name__ == "__main__":
     parser.add_argument("--batchsize", type=int, default=1024)
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--store-path", default="/nvme1n1/offgs_dataset")
-    parser.add_argument("--feat-cache-size", type=float, default=1e10)
+    parser.add_argument("--feat-cache-size", type=float, default=3e9)
     parser.add_argument("--disk_cache_num", type=float, default=0)
     parser.add_argument("--segment-size", type=int, default=200)
-    parser.add_argument("--log", type=str, default="/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv")
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv",
+    )
     parser.add_argument("--ratio", type=float, default=1.0)
     args = parser.parse_args()
     print(args)
