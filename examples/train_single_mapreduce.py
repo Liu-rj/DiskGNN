@@ -28,7 +28,7 @@ def train(
     subg_dir: str,
     aux_dir: str,
 ):
-    num_seg_dataset=8
+    num_seg_dataset = 8
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
@@ -134,25 +134,26 @@ def train(
                 rev_hot_idx,
             ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
             meta_load += time.time() - tic
-            concat_indices=[]
-            concat_features=[]
+            concat_indices = []
+            concat_features = []
             tic = time.time()
             for segid in range(num_seg_dataset):
-                true_pos = torch.load(f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt")
-                feat=torch.ops.offgs._CAPI_LoadFeats_Direct(
+                true_pos = torch.load(
+                    f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt"
+                )
+                feat = torch.ops.offgs._CAPI_LoadFeats_Direct(
                     f"{aux_dir}/feat/train-aux-{i}-{segid}.bin",
                     true_pos.numel(),
                     dataset.num_features,
                 )
                 concat_indices.append(true_pos)
                 concat_features.append(feat)
-            concat_indices=torch.cat(concat_indices)
-            concat_features=torch.cat(concat_features,dim=0)
+            concat_indices = torch.cat(concat_indices)
+            concat_features = torch.cat(concat_features, dim=0)
             num_input = concat_indices.numel() + mem_loc.numel()
             cold_load += time.time() - tic  # sample and graph transfer
-            
-            
-            tic=time.time()
+
+            tic = time.time()
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
@@ -192,7 +193,6 @@ def train(
             opt.step()
             torch.cuda.synchronize()
             info_recorder[5] += time.time() - tic
-
 
         info_recorder[1] += (
             meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
