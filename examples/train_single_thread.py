@@ -136,6 +136,7 @@ def train(
             meta_load += time.time() - tic
             concat_indices=[]
             concat_features=[]
+            tic = time.time()
             for segid in range(num_seg_dataset):
                 true_pos = torch.load(f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt")
                 feat=torch.ops.offgs._CAPI_LoadFeats_Direct(
@@ -148,6 +149,10 @@ def train(
             concat_indices=torch.cat(concat_indices)
             concat_features=torch.cat(concat_features,dim=0)
             num_input = concat_indices.numel() + mem_loc.numel()
+            cold_load += time.time() - tic  # sample and graph transfer
+            
+            
+            tic=time.time()
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
@@ -263,7 +268,7 @@ def train(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Feat Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
+            f"Load and permutate overhead : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
             f"Sample init time: {info_recorder[6]:.3f}\t"
@@ -400,7 +405,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
-    args.debug = True
     print(args)
     args.cpu_cache_size = int(args.cpu_cache_size)
     args.gpu_cache_size = int(args.gpu_cache_size)

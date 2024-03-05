@@ -220,10 +220,10 @@ def train(
             torch.cuda.synchronize()
             info_recorder[5] += time.time() - tic
 
-            tic = time.time()
-            if disk_cold.numel() > 0:
-                torch.ops.offgs._CAPI_FreeTensor(cold_feats)
-            feat_free += time.time() - tic
+            # tic = time.time()
+            # if disk_cold.numel() > 0:
+            #     torch.ops.offgs._CAPI_FreeTensor(cold_feats)
+            # feat_free += time.time() - tic
 
         info_recorder[1] += (
             meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free

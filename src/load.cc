@@ -181,8 +181,10 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
       torch::from_blob(read_buffer, total_size / sizeof(float), options)
           .view({num_indices, feature_dim});
   // all_data = all_data.pin_memory().view({num_indices, feature_dim});
+  all_data = all_data.clone();
 
-  // free(read_buffer);
+
+  free(read_buffer);
 
   return all_data;
 }

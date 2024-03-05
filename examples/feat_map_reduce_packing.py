@@ -27,7 +27,7 @@ def init_cache(args, dataset, cached_nodes):
 
 def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entries, cache_indices, device, time_record, total_packed_nodes, address_table, key, value,cache_init_time):
     num_segments = (num_batches + args.segment_size - 1) // args.segment_size
-
+    on_demand_load=True
     num_seg_dataset=8
     for segid in trange(num_segments, ncols=100):
         startid = segid * args.segment_size
@@ -72,7 +72,11 @@ def new_preprocessing(args, dataset, output_dir, aux_dir, num_batches, num_entri
                 with utils.with_profile_time(slice_time):
                     ## this is the correct node id to load from disk (not in CPU cache)
                     # Boolean mask to identify the true indices within input_node
-                    mask = table[input_node]
+                    
+                    if on_demand_load==True:
+                        mask=table[torch.load(f"{output_dir}/in-nid-{i}.pt")]
+                    else:
+                        mask=table[input_node]
                     # Find the indices of the true values within input_node
                     true_positions = torch.nonzero(mask, as_tuple=True)[0]
                     true_indices = input_node[mask]
@@ -507,7 +511,7 @@ if __name__ == "__main__":
     parser.add_argument("--batchsize", type=int, default=1024)
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--store-path", default="/nvme1n1/offgs_dataset")
-    parser.add_argument("--feat-cache-size", type=float, default=1e10)
+    parser.add_argument("--feat-cache-size", type=float, default=3e9)
     parser.add_argument("--disk_cache_num", type=float, default=0)
     parser.add_argument("--segment-size", type=int, default=200)
     parser.add_argument("--log", type=str, default="/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv")
