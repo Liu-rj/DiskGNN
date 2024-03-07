@@ -8,8 +8,10 @@ from offgs.dataset import OffgsDataset
 import dgl
 from dgl.data import DGLDataset
 import warnings
+import contextlib
 
 warnings.filterwarnings("ignore")
+import time
 
 
 class IGB260M(object):
@@ -205,3 +207,23 @@ def kill_proc(p):
         p.terminate()
     except Exception:
         pass
+
+
+@contextlib.contextmanager
+def with_profile_time(records):
+    torch.cuda.synchronize()
+    start = time.time()
+    yield
+    torch.cuda.synchronize()
+    end = time.time()
+    records.append((end - start) * 1000)
+
+
+@contextlib.contextmanager
+def with_profile_time_print(str):
+    torch.cuda.synchronize()
+    start = time.time()
+    yield
+    torch.cuda.synchronize()
+    end = time.time()
+    print(f"{str} Time: {(end - start) * 1000} ms")

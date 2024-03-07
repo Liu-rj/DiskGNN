@@ -28,6 +28,7 @@ def train(
     subg_dir: str,
     aux_dir: str,
 ):
+    num_seg_dataset = 8
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
@@ -57,17 +58,13 @@ def train(
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    # train_nid = (
-    #     dataset.split_idx["train"]
-    #     if args.ratio == 1.0
-    #     else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
-    # )
-    # print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
-    # size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
-    train_num = dataset.split_idx["train"].numel()
-    size = (train_num + args.batchsize - 1) // args.batchsize
-    print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
-    pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
+    train_nid = (
+        dataset.split_idx["train"]
+        if args.ratio == 1.0
+        else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
+    )
+    print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
+    size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
 
     if args.debug:
         val_dataloader = DataLoader(
@@ -102,12 +99,6 @@ def train(
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        batch_id = []
-        while len(batch_id) < size:
-            permutation = torch.randperm(pool_size).tolist()
-            batch_id += permutation
-        batch_id = batch_id[:size]
-
         tot_loss = 0
         info_recorder = [0] * 9
         torch.cuda.synchronize()
@@ -124,10 +115,12 @@ def train(
         ) = (0, 0, 0, 0, 0)
 
         model.train()
-        for i in tqdm(batch_id, ncols=100):
+        for i in trange(size, ncols=100):
             tic = time.time()
             blocks = torch.load(f"{subg_dir}/train-{i}.pt")
             output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
+            if args.debug:
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
             info_recorder[0] += time.time() - tic  # graph load
 
             tic = time.time()
@@ -141,49 +134,32 @@ def train(
                 rev_hot_idx,
             ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
             meta_load += time.time() - tic
-
+            concat_indices = []
+            concat_features = []
             tic = time.time()
-            num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
-            disk_feats = torch.empty(
-                (num_disk, dataset.num_features),
-                dtype=torch.float32,
-                pin_memory=True,
-            )
-            feat_create += time.time() - tic
-
-            tic = time.time()
-            if disk_cold.numel() > 0:
-                cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                    f"{aux_dir}/feat/train-aux-{i}.bin",
-                    disk_cold.numel(),
+            for segid in range(num_seg_dataset):
+                true_pos = torch.load(
+                    f"{aux_dir}/feat/train-aux-true-positions-{i}-{segid}.pt"
+                )
+                feat = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                    f"{aux_dir}/feat/train-aux-{i}-{segid}.bin",
+                    true_pos.numel(),
                     dataset.num_features,
                 )
-                disk_feats[disk_rev_cold_idx] = cold_feats
-            cold_load += time.time() - tic
+                concat_indices.append(true_pos)
+                concat_features.append(feat)
+            concat_indices = torch.cat(concat_indices)
+            concat_features = torch.cat(concat_features, dim=0)
+            num_input = concat_indices.numel() + mem_loc.numel()
+            cold_load += time.time() - tic  # sample and graph transfer
 
             tic = time.time()
-            torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
-                disk_feats,
-                disk_loc,
-                disk_rev_hot_idx,
-                dataset.num_features,
-            )
-            cache_load += time.time() - tic
-            io_traffic = disk_cold.numel() + torch.unique(disk_loc // 8).numel() * 8
-            info_recorder[7] += io_traffic  # cold_feats_num
-            total_disk_cold += disk_cold.numel()
-            total_disk_cache += torch.unique(disk_loc // 8).numel() * 8
-
-            tic = time.time()
-            num_input = num_disk + mem_loc.numel()
             x = torch.empty(
                 (num_input, dataset.num_features),
                 dtype=torch.float32,
                 device=device,
             )
-            if num_disk > 0:
-                x[rev_cold_idx] = disk_feats.to(device)
+            x[concat_indices] = concat_features.to(device)
             torch.ops.offgs._CAPI_GatherInGPU(
                 x,
                 rev_hot_idx.to(device),
@@ -191,13 +167,15 @@ def train(
                 gpu_cached_feats,
                 mem_loc.to(device),
             )
+
             torch.cuda.synchronize()
             info_recorder[2] += time.time() - tic  # feat assemble
             info_recorder[8] += x.shape[0]  # input node num
             if args.debug:
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
-                input_feats = features[input_nodes].to(device)
-                assert torch.equal(x, input_feats)
+                input_feats = gather_pinned_tensor_rows(
+                    features, input_nodes.to(device)
+                )
+                assert torch.allclose(x, input_feats)
 
             tic = time.time()
             blocks = [block.to(device) for block in blocks]
@@ -216,11 +194,6 @@ def train(
             torch.cuda.synchronize()
             info_recorder[5] += time.time() - tic
 
-            # tic = time.time()
-            # if disk_cold.numel() > 0:
-            #     torch.ops.offgs._CAPI_FreeTensor(cold_feats)
-            # feat_free += time.time() - tic
-
         info_recorder[1] += (
             meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
         )  # feature load
@@ -229,7 +202,7 @@ def train(
             # --- valid ---#
             model.eval()
             valid_correct, valid_tot, val_acc = 0, 0, 0
-            for it, (input_nodes, output_nodes, blocks) in enumerate(
+            for i, (input_nodes, output_nodes, blocks) in enumerate(
                 tqdm(val_dataloader, ncols=100)
             ):
                 blocks = [block.to(device) for block in blocks]
@@ -249,7 +222,7 @@ def train(
             model.eval()
             test_correct, test_tot, test_acc = 0, 0, 0
             if args.dataset != "mag240m":
-                for it, (input_nodes, output_nodes, blocks) in enumerate(
+                for i, (input_nodes, output_nodes, blocks) in enumerate(
                     tqdm(test_dataloader, ncols=100)
                 ):
                     blocks = [block.to(device) for block in blocks]
@@ -295,7 +268,7 @@ def train(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Feat Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
+            f"Load and permutate overhead : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
             f"Sample init time: {info_recorder[6]:.3f}\t"
@@ -337,7 +310,7 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
-            f"{args.disk_cache_num:g}",
+            args.disk_cache_num,
             args.segment_size,
             args.model,
             args.num_epoch,
