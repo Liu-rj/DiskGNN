@@ -3,21 +3,111 @@ from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import gather_pinned_tensor_rows
 import time
 import argparse
-from ctypes import *
-from ctypes.util import *
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-import pandas as pd
 from load_graph import *
 from offgs.utils import SAGE, GAT
 from offgs.dataset import OffgsDataset
-from queue import Queue
 import threading
+import queue
 import psutil
 import csv
-from dgl.utils import gather_pinned_tensor_rows
+import atexit
+import utils
+
 import offgs
+
+
+def load_graph(queue, path, batch_id, labels):
+    for i in batch_id:
+        blocks = torch.load(f"{path}/train-{i}.pt")
+        output_nodes = torch.load(f"{path}/out-nid-{i}.pt")
+        y = labels[output_nodes].long()
+        queue.put((blocks, y))
+
+
+def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
+    for i in batch_id:
+        (
+            disk_cold,
+            disk_rev_cold_idx,
+            disk_loc,
+            disk_rev_hot_idx,
+            rev_cold_idx,
+            mem_loc,
+            rev_hot_idx,
+        ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
+        feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
+        transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
+
+
+def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
+    torch.ops.offgs._CAPI_Init_iouring()
+    for i in batch_id:
+        disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx = in_queue.get()
+        num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
+        disk_feats = torch.empty(
+            (num_disk, dataset.num_features),
+            dtype=torch.float32,
+            pin_memory=True,
+        )
+
+        if disk_cold.numel() > 0:
+            cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                f"{aux_dir}/feat/train-aux-{i}.bin",
+                disk_cold.numel(),
+                dataset.num_features,
+            )
+            disk_feats[disk_rev_cold_idx] = cold_feats
+            torch.ops.offgs._CAPI_FreeTensor(cold_feats)
+
+        torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
+            f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
+            disk_feats,
+            disk_loc,
+            disk_rev_hot_idx,
+            dataset.num_features,
+        )
+
+        out_queue.put(disk_feats)
+    torch.ops.offgs._CAPI_Exit_iouring()
+
+
+def feat_transfer(
+    in_queue,
+    disk_feats_queue,
+    out_queue,
+    cpu_cached_feats,
+    gpu_cached_feats,
+    batch_id,
+    dataset,
+    device,
+):
+    for i in batch_id:
+        rev_cold_idx, mem_loc, rev_hot_idx = in_queue.get()
+        disk_feats = disk_feats_queue.get()
+        num_disk = rev_cold_idx.numel()
+
+        num_input = num_disk + mem_loc.numel()
+        x = torch.empty(
+            (num_input, dataset.num_features),
+            dtype=torch.float32,
+            device=device,
+        )
+        if num_disk > 0:
+            x[rev_cold_idx] = disk_feats.to(device)
+        s = torch.cuda.Stream(device)
+        with torch.cuda.stream(s):
+            torch.ops.offgs._CAPI_GatherInGPU(
+                x,
+                rev_hot_idx.to(device),
+                cpu_cached_feats,
+                gpu_cached_feats,
+                mem_loc.to(device),
+            )
+        s.synchronize()
+        out_queue.put(x)
 
 
 def train(
@@ -57,13 +147,6 @@ def train(
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    # train_nid = (
-    #     dataset.split_idx["train"]
-    #     if args.ratio == 1.0
-    #     else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
-    # )
-    # print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
-    # size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
     train_num = dataset.split_idx["train"].numel()
     size = (train_num + args.batchsize - 1) // args.batchsize
     print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
@@ -93,11 +176,8 @@ def train(
                 use_uva=True,
             )
 
-    torch.ops.offgs._CAPI_Init_iouring()
-
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
-    epoch_info_recorder = [[] for i in range(10)]
-    feat_load_decompose = [[] for i in range(13)]
+    epoch_info_recorder = [[] for i in range(6)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
@@ -108,122 +188,100 @@ def train(
             batch_id += permutation
         batch_id = batch_id[:size]
 
-        tot_loss = 0
-        info_recorder = [0] * 9
-        torch.cuda.synchronize()
-
-        meta_load, feat_pin, feat_free = 0, 0, 0
-        feat_create, cold_load, cache_load = 0, 0, 0
-        total_disk_cold, total_disk_cache = 0, 0
+        threads = []
         (
-            disk_page_unique,
-            page_alloc,
-            disk_cache_load,
-            disk_cache_copy,
-            disk_page_free,
-        ) = (0, 0, 0, 0, 0)
+            graph_queue,
+            feat_load_queue,
+            disk_feat_queue,
+            transfer_queue,
+            feature_queue,
+        ) = [queue.Queue(maxsize=2) for i in range(5)]
+
+        threads.append(
+            threading.Thread(
+                target=load_graph,
+                args=(graph_queue, subg_dir, batch_id, labels),
+                daemon=True,
+            )
+        )
+
+        threads.append(
+            threading.Thread(
+                target=load_meta,
+                args=(feat_load_queue, transfer_queue, aux_dir, batch_id),
+                daemon=True,
+            )
+        )
+
+        threads.append(
+            threading.Thread(
+                target=load_feats,
+                args=(
+                    feat_load_queue,
+                    disk_feat_queue,
+                    aux_dir,
+                    batch_id,
+                    dataset,
+                    args.segment_size,
+                ),
+                daemon=True,
+            )
+        )
+
+        threads.append(
+            threading.Thread(
+                target=feat_transfer,
+                args=(
+                    transfer_queue,
+                    disk_feat_queue,
+                    feature_queue,
+                    cpu_cached_feats,
+                    gpu_cached_feats,
+                    batch_id,
+                    dataset,
+                    device,
+                ),
+                daemon=True,
+            )
+        )
+
+        for t in threads:
+            t.start()
+
+        tot_loss = 0
+        info_recorder = [0] * 5
+        default_stream = torch.cuda.current_stream(device)
+        torch.cuda.synchronize()
+        start = time.time()
 
         model.train()
         for i in tqdm(batch_id, ncols=100):
-            tic = time.time()
-            blocks = torch.load(f"{subg_dir}/train-{i}.pt")
-            output_nodes = torch.load(f"{subg_dir}/out-nid-{i}.pt")
-            info_recorder[0] += time.time() - tic  # graph load
+            # tic = time.time()
+            blocks, y = graph_queue.get()
+            blocks = [block.to(device, non_blocking=True) for block in blocks]
+            y = y.to(device, non_blocking=True)
+            # info_recorder[0] += time.time() - tic  # graph load
 
-            tic = time.time()
-            (
-                disk_cold,
-                disk_rev_cold_idx,
-                disk_loc,
-                disk_rev_hot_idx,
-                rev_cold_idx,
-                mem_loc,
-                rev_hot_idx,
-            ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
-            meta_load += time.time() - tic
+            x = feature_queue.get()
 
-            tic = time.time()
-            num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
-            disk_feats = torch.empty(
-                (num_disk, dataset.num_features),
-                dtype=torch.float32,
-                pin_memory=True,
-            )
-            feat_create += time.time() - tic
-
-            tic = time.time()
-            if disk_cold.numel() > 0:
-                cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                    f"{aux_dir}/feat/train-aux-{i}.bin",
-                    disk_cold.numel(),
-                    dataset.num_features,
-                )
-                disk_feats[disk_rev_cold_idx] = cold_feats
-            cold_load += time.time() - tic
-
-            tic = time.time()
-            torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-                f"{aux_dir}/disk_cache/disk-cache-{i // args.segment_size}.bin",
-                disk_feats,
-                disk_loc,
-                disk_rev_hot_idx,
-                dataset.num_features,
-            )
-            cache_load += time.time() - tic
-            io_traffic = disk_cold.numel() + torch.unique(disk_loc // 8).numel() * 8
-            info_recorder[7] += io_traffic  # cold_feats_num
-            total_disk_cold += disk_cold.numel()
-            total_disk_cache += torch.unique(disk_loc // 8).numel() * 8
-
-            tic = time.time()
-            num_input = num_disk + mem_loc.numel()
-            x = torch.empty(
-                (num_input, dataset.num_features),
-                dtype=torch.float32,
-                device=device,
-            )
-            if num_disk > 0:
-                x[rev_cold_idx] = disk_feats.to(device)
-            torch.ops.offgs._CAPI_GatherInGPU(
-                x,
-                rev_hot_idx.to(device),
-                cpu_cached_feats,
-                gpu_cached_feats,
-                mem_loc.to(device),
-            )
-            torch.cuda.synchronize()
-            info_recorder[2] += time.time() - tic  # feat assemble
-            info_recorder[8] += x.shape[0]  # input node num
             if args.debug:
                 input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
                 input_feats = features[input_nodes].to(device)
                 assert torch.equal(x, input_feats)
 
-            tic = time.time()
-            blocks = [block.to(device) for block in blocks]
-            y = labels[output_nodes - label_offset].to(device).long()
-            # y = labels[output_nodes].to(device).long()
-            torch.cuda.synchronize()
-            info_recorder[3] += time.time() - tic  # graph & label transfer
-
-            tic = time.time()
+            # tic = time.time()
             pred = model(blocks, x)
             loss = F.cross_entropy(pred, y)
-            tot_loss += loss.item()
             opt.zero_grad()
             loss.backward()
             opt.step()
-            torch.cuda.synchronize()
-            info_recorder[5] += time.time() - tic
+            # default_stream.synchronize()
+            # info_recorder[2] += time.time() - tic  # train
 
-            # tic = time.time()
-            # if disk_cold.numel() > 0:
-            #     torch.ops.offgs._CAPI_FreeTensor(cold_feats)
-            # feat_free += time.time() - tic
-
-        info_recorder[1] += (
-            meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
-        )  # feature load
+        for t in threads:
+            t.join()
+        torch.cuda.synchronize()
+        epoch_time = time.time() - start
 
         if args.debug:
             # --- valid ---#
@@ -276,56 +334,16 @@ def train(
             )
 
         print(
-            f"Meta Load Time: {meta_load:.3f}\t"
-            f"Feat Create Time: {feat_create:.3f}\t"
-            f"Cold Load Time: {cold_load:.3f}\t"
-            f"Cache Load Time: {cache_load:.3f}\t"
-            f"Feat Pin Time: {feat_pin:.3f}\t"
-            f"Feat Free Time: {feat_free:.3f}\t"
-            f"Total Disk Cold: {total_disk_cold}\t"
-            f"Total Disk Cache: {total_disk_cache}\t"
-            f"Disk Page Unique: {disk_page_unique:.3f}\t"
-            f"Disk Page Alloc: {page_alloc:.3f}\t"
-            f"Disk Cache Load: {disk_cache_load:.3f}\t"
-            f"Disk Cache Copy: {disk_cache_copy:.3f}\t"
-            f"Disk Page Free: {disk_page_free:.3f}\t"
-        )
-
-        print(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
-            f"Feat Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
-            f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
-            f"Train Time: {info_recorder[5]:.3f}\t"
-            f"Sample init time: {info_recorder[6]:.3f}\t"
-            f"Epoch Time: {np.sum(info_recorder[:7]):.3f}\t"
-            f"Cold Feats Num: {info_recorder[7]}\t"
-            f"Block Input Node Num: {info_recorder[8]}\t"
+            f"Train Time: {info_recorder[2]:.3f}\t"
+            f"Epoch Time: {epoch_time:.3f}\t"
+            f"Cold Feats num: {info_recorder[3]}\t"
+            f"Feature Transfer num: {info_recorder[4]}\t"
         )
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
-        epoch_info_recorder[-1].append(np.sum(info_recorder[:7]))
-        for i, info in enumerate(
-            [
-                meta_load,
-                feat_create,
-                cold_load,
-                cache_load,
-                feat_pin,
-                feat_free,
-                total_disk_cold,
-                total_disk_cache,
-                disk_page_unique,
-                page_alloc,
-                disk_cache_load,
-                disk_cache_copy,
-                disk_page_free,
-            ]
-        ):
-            feat_load_decompose[i].append(info)
-
-    torch.ops.offgs._CAPI_Exit_iouring()
+        epoch_info_recorder[-1].append(epoch_time)
 
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
@@ -347,16 +365,11 @@ def train(
         ]
         for epoch_info in epoch_info_recorder:
             log_info.append(round(np.mean(epoch_info[1:]), 2))
-        for epoch_info in feat_load_decompose:
-            log_info.append(round(np.mean(epoch_info[1:]), 2))
         writer.writerow(log_info)
 
 
 def init_cache(args, dataset, cached_nodes):
     device = torch.device(f"cuda:{args.device}")
-    # table_size = 4 * dataset.num_nodes
-    # print(f"Adress Table Size: {table_size / (1024 * 1024 * 1024)} GB")
-    # gpu_idx_cache_size = max(0, args.gpu_cache_size - table_size)
     gpu_num_entries = args.gpu_cache_size // (4 * dataset.num_features)
     gpu_cached_idx = cached_nodes[:gpu_num_entries]
     cpu_cache_idx = cached_nodes[gpu_num_entries:]
@@ -365,14 +378,6 @@ def init_cache(args, dataset, cached_nodes):
         (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
     )
     cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
-    # address_table = torch.zeros((dataset.num_nodes,), dtype=torch.int32)
-    # address_table[cpu_cache_idx] = (
-    #     torch.arange(cpu_cache_idx.numel(), dtype=torch.int32) + 1
-    # )
-    # address_table[gpu_cached_idx] = -(
-    #     torch.arange(gpu_cached_idx.numel(), dtype=torch.int32) + 1
-    # )
-    # address_table = address_table.to(device)
     return cpu_cached_feats, gpu_cached_feats
 
 
@@ -416,20 +421,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--batchsize", type=int, default=1024)
-    parser.add_argument("--dataset", default="friendster")
+    parser.add_argument("--dataset", default="ogbn-products")
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
-    parser.add_argument("--gpu-cache-size", type=float, default=0)
-    parser.add_argument("--disk-cache-num", type=float, default=0)
-    parser.add_argument("--segment-size", type=int, default=200)
+    parser.add_argument("--gpu-cache-size", type=float, default=1e10)
+    parser.add_argument("--disk-cache-num", type=float, default=1e6)
+    parser.add_argument("--segment-size", type=int, default=100)
     parser.add_argument("--num-epoch", type=int, default=3)
-    parser.add_argument("--ratio", type=float, default=1.0)
-    parser.add_argument(
-        "--log", type=str, default="logs/train_single_thread_decompose.csv"
-    )
+    parser.add_argument("--ratio", type=float, default=1)
+    parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     print(args)

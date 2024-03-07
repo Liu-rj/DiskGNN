@@ -267,7 +267,7 @@ def run(dataset: OffgsDataset, args):
             args.batchsize,
             args.ratio,
             f"{args.feat_cache_size:g}",
-            args.disk_cache_num,
+            f"{args.disk_cache_num:g}",
             args.segment_size,
             total_packed_nodes,
             round(cache_init_time, 2),

@@ -10,7 +10,6 @@
 namespace offgs {
 struct IOUringState {
   std::array<io_uring, NUM_RING> ring_arr;
-  std::queue<io_uring> ring_queue;
 
   static IOUringState *Global() {
     static IOUringState state;
