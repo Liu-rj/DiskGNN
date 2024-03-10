@@ -74,7 +74,6 @@ def run(dataset: OffgsDataset, args):
         f"Num Segments: {num_segments}, Segment Size: {segment_size} ({args.segment_size})"
     )
 
-    
     time_record = [0] * 11
     total_packed_nodes = 0
     for segid in trange(num_segments, ncols=100):
@@ -175,10 +174,6 @@ def run(dataset: OffgsDataset, args):
         time_record[6] += time.time() - tic
 
         for bid in range(startid, endid):
-            print(f"Processing Batch {bid} / {num_batches}")
-
-            ## print time 8
-            print(f'time_record[8]: {time_record[8]}')
             # calculate cold nodes
             tic = time.time()
             input_nodes = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
@@ -209,7 +204,6 @@ def run(dataset: OffgsDataset, args):
             packed_feats = torch.ops.offgs._CAPI_GatherPReadDirect(
                 dataset.features_path, disk_cold.cpu(), dataset.num_features
             )
-            print(f'disk cold shape: {disk_cold.shape}')
             time_record[8] += time.time() - tic
 
             # save meta data
@@ -286,9 +280,13 @@ if __name__ == "__main__":
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--store-path", default="/nvme1n1/offgs_dataset")
     parser.add_argument("--feat-cache-size", type=float, default=1e10)
-    parser.add_argument("--disk_cache_num", type=float, default=0)
+    parser.add_argument("--disk-cache-num", type=float, default=0)
     parser.add_argument("--segment-size", type=int, default=200)
-    parser.add_argument("--log", type=str, default="/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv")
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="/home/ubuntu/OfflineSampling/examples/logs/pack_decompose.csv",
+    )
     parser.add_argument("--ratio", type=float, default=1.0)
     args = parser.parse_args()
     print(args)

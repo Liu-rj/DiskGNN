@@ -17,6 +17,7 @@ def load_ogb(name, root):
     if name == "ogbn-papers100M":
         labels[labels.isnan()] = 404.0
         labels = labels.long()
+        g = dgl.add_reverse_edges(g)
     n_classes = len(torch.unique(labels[torch.logical_not(torch.isnan(labels))]))
     g = dgl.remove_self_loop(g)
     g = dgl.add_self_loop(g)

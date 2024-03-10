@@ -6,6 +6,7 @@ temp
 imgs
 logs
 dataset
+figs
 
 build
 dist

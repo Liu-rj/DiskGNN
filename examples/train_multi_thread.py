@@ -19,11 +19,11 @@ import utils
 import offgs
 
 
-def load_graph(queue, path, batch_id, labels):
+def load_graph(queue, path, batch_id, labels, label_offset):
     for i in batch_id:
         blocks = torch.load(f"{path}/train-{i}.pt")
         output_nodes = torch.load(f"{path}/out-nid-{i}.pt")
-        y = labels[output_nodes].long()
+        y = labels[output_nodes - label_offset].long()
         queue.put((blocks, y))
 
 
@@ -143,7 +143,9 @@ def train(
             dataset.num_features,
             256,
             dataset.num_classes,
-            [8, 2],
+            4,
+            len(fanout),
+            args.dropout,
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
@@ -200,7 +202,7 @@ def train(
         threads.append(
             threading.Thread(
                 target=load_graph,
-                args=(graph_queue, subg_dir, batch_id, labels),
+                args=(graph_queue, subg_dir, batch_id, labels, label_offset),
                 daemon=True,
             )
         )
@@ -345,6 +347,8 @@ def train(
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(epoch_time)
 
+    print(f"Avg Epoch Time: {np.mean(epoch_info_recorder[-1][1:]):.3f}")
+    
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
