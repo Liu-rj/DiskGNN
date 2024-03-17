@@ -15,6 +15,7 @@ import psutil
 import csv
 import atexit
 import utils
+import json
 
 import offgs
 
@@ -133,7 +134,7 @@ def train(
     if args.model == "SAGE":
         model = SAGE(
             dataset.num_features,
-            256,
+            args.hidden,
             dataset.num_classes,
             len(fanout),
             args.dropout,
@@ -141,7 +142,7 @@ def train(
     elif args.model == "GAT":
         model = GAT(
             dataset.num_features,
-            256,
+            args.hidden,
             dataset.num_classes,
             4,
             len(fanout),
@@ -257,6 +258,7 @@ def train(
         start = time.time()
 
         model.train()
+        train_correct, train_tot, train_acc = 0, 0, 0
         for i in tqdm(batch_id, ncols=100):
             # tic = time.time()
             blocks, y = graph_queue.get()
@@ -265,6 +267,7 @@ def train(
             # info_recorder[0] += time.time() - tic  # graph load
 
             x = feature_queue.get()
+            info_recorder[4] += x.numel()
 
             if args.debug:
                 input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
@@ -277,9 +280,15 @@ def train(
             opt.zero_grad()
             loss.backward()
             opt.step()
+
+            correct = (pred.argmax(dim=1) == y).sum().item()
+            total = y.shape[0]
+            train_correct += correct
+            train_tot += total
             # default_stream.synchronize()
             # info_recorder[2] += time.time() - tic  # train
 
+        train_acc = train_correct / train_tot
         for t in threads:
             t.join()
         torch.cuda.synchronize()
@@ -340,15 +349,16 @@ def train(
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Train Time: {info_recorder[2]:.3f}\t"
             f"Epoch Time: {epoch_time:.3f}\t"
-            f"Cold Feats num: {info_recorder[3]}\t"
-            f"Feature Transfer num: {info_recorder[4]}\t"
+            f"Cold Feats Num: {info_recorder[3]}\t"
+            f"Input Feature Num: {info_recorder[4]}\t"
+            f"Train acc: {train_acc * 100:.2f}%"
         )
         for i, info in enumerate(info_recorder):
             epoch_info_recorder[i].append(info)
         epoch_info_recorder[-1].append(epoch_time)
 
     print(f"Avg Epoch Time: {np.mean(epoch_info_recorder[-1][1:]):.3f}")
-    
+
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
@@ -362,6 +372,8 @@ def train(
             f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
+            args.hidden,
+            args.dropout,
             args.num_epoch,
             best_epoch,
             round(best_val_acc * 100, 2),
@@ -390,7 +402,7 @@ def start(args):
 
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.dir, subg_dir)
-    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/blowup-{args.blowup}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
@@ -407,6 +419,10 @@ def start(args):
 
     args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
     args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
+
+    dc_config = json.load(open(f"{aux_dir}/dc_config.json", "r"))
+    args.disk_cache_num = dc_config["num_disk_cache"]
+    args.segment_size = dc_config["segment_size"]
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory Occupation:", mem1 - mem, "GB")
@@ -427,13 +443,15 @@ if __name__ == "__main__":
     parser.add_argument("--batchsize", type=int, default=1024)
     parser.add_argument("--dataset", default="ogbn-products")
     parser.add_argument("--fanout", type=str, default="10,10,10")
-    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--hidden", type=int, default=256)
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
     parser.add_argument("--gpu-cache-size", type=float, default=1e10)
-    parser.add_argument("--disk-cache-num", type=float, default=1e6)
-    parser.add_argument("--segment-size", type=int, default=100)
+    # parser.add_argument("--disk-cache-num", type=float, default=1e6)
+    # parser.add_argument("--segment-size", type=int, default=100)
+    parser.add_argument("--blowup", type=float, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)
     parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
