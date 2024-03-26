@@ -145,6 +145,7 @@ def search_disk_cache_approximate(
 
 def run(dataset: OffgsDataset, args):
     device = torch.device(f"cuda:{args.device}")
+    torch.cuda.set_device(device)
     page_feats = 4096 / (dataset.num_features * 4)
 
     dataset_path = f"{args.store_path}/{args.dataset}-offgs"
@@ -174,6 +175,7 @@ def run(dataset: OffgsDataset, args):
         if args.ratio == 1.0
         else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
     )
+    print(f"Train Node Ratio: {train_idx.numel() / dataset.num_nodes}")
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
     # segment_size = num_batches if args.segment_size == -1 else args.segment_size
 
@@ -201,14 +203,18 @@ def run(dataset: OffgsDataset, args):
 
     # search disk cache
     tic = time.time()
-    target_size = dataset.num_nodes * args.blowup
-    # segment_size, disk_cache_num = search_disk_cache_approximate(
-    #     dataset, subg_dir, (key, value), num_batches, target_size, device
-    # )
-    segment_size, disk_cache_num = search_disk_cache_brutal_force(
-        dataset, subg_dir, (key, value), num_batches, target_size, device
-    )
-    segment_size = num_batches if disk_cache_num == 0 else segment_size
+    if args.blowup == -1:
+        segment_size, disk_cache_num = num_batches, 0
+    else:
+        assert args.blowup > 0
+        target_size = dataset.num_nodes * args.blowup
+        segment_size, disk_cache_num = search_disk_cache_approximate(
+            dataset, subg_dir, (key, value), num_batches, target_size, device
+        )
+        # segment_size, disk_cache_num = search_disk_cache_brutal_force(
+        #     dataset, subg_dir, (key, value), num_batches, target_size, device
+        # )
+        segment_size = num_batches if disk_cache_num == 0 else segment_size
     dc_search_time = time.time() - tic
     print(f"Search Time: {dc_search_time:.3f} s")
     print(f"Segment Size: {segment_size}, Disk Cache Num: {disk_cache_num}")
@@ -237,8 +243,8 @@ def run(dataset: OffgsDataset, args):
         # build disk cache
         tic = time.time()
         seg_sorted_idx = torch.argsort(popularity, descending=True)
-        assert disk_cache_num <= (popularity > 0).sum().item()
-        cache_num = disk_cache_num
+        # assert disk_cache_num <= (popularity > 0).sum().item()
+        cache_num = min(disk_cache_num, (popularity > 1).sum().item())
         disk_cache = seg_sorted_idx[:cache_num].cpu()
         disk_table = torch.full((dataset.num_nodes,), -1, dtype=torch.int64)
         disk_table[disk_cache] = torch.arange(cache_num, dtype=torch.int64)

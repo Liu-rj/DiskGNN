@@ -22,6 +22,7 @@ def train(
 ):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
+    acc_logfile = f"logs/online_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}.csv"
 
     labels = dataset.labels.pin_memory()
     print("features shape:", features.shape)
@@ -48,7 +49,7 @@ def train(
             len(fanout),
             args.dropout,
         ).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_dataloader = DataLoader(
         graph,
@@ -87,6 +88,7 @@ def train(
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
     epoch_info_recorder = [[] for i in range(10)]
     for epoch in range(args.num_epoch):
+        train_correct, train_tot, train_acc = 0, 0, 0
         tot_loss = 0
         info_recorder = [0] * 9
         torch.cuda.synchronize()
@@ -118,6 +120,13 @@ def train(
             opt.step()
             torch.cuda.synchronize()
             info_recorder[5] += time.time() - tic
+
+            correct = (pred.argmax(dim=1) == y).sum().item()
+            total = y.shape[0]
+            train_correct += correct
+            train_tot += total
+
+        train_acc = train_correct / train_tot
 
         # --- valid ---#
         model.eval()
@@ -160,6 +169,20 @@ def train(
             best_test_acc = test_acc
             best_epoch = epoch
 
+        with open(acc_logfile, "a") as f:
+            writer = csv.writer(f, lineterminator="\n")
+            log_info = [
+                epoch,
+                round(tot_loss, 3),
+                round(train_acc * 100, 2),
+                round(val_acc * 100, 2),
+                round(test_acc * 100, 2),
+                round(best_val_acc * 100, 2),
+                round(best_test_acc * 100, 2),
+                best_epoch,
+            ]
+            writer.writerow(log_info)
+
         print(
             f"Epoch: {epoch}\t"
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
@@ -187,6 +210,8 @@ def train(
             args.fanout,
             args.batchsize,
             args.model,
+            args.hidden,
+            args.dropout,
             args.num_epoch,
             best_epoch,
             round(best_val_acc * 100, 2),

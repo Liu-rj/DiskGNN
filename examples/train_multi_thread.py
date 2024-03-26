@@ -122,6 +122,8 @@ def train(
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
+    acc_logfile = f"acc/logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
+    torch.cuda.set_device(device)
 
     if args.debug:
         graph = dataset.graph
@@ -130,7 +132,7 @@ def train(
     cpu_cached_feats = cpu_cached_feats.pin_memory()
     label_offset = dataset.conf["label_offset"]
 
-    sampler = NeighborSampler([10, 10, 10])
+    sampler = NeighborSampler(fanout)
     if args.model == "SAGE":
         model = SAGE(
             dataset.num_features,
@@ -148,7 +150,7 @@ def train(
             len(fanout),
             args.dropout,
         ).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_num = dataset.split_idx["train"].numel()
     size = (train_num + args.batchsize - 1) // args.batchsize
@@ -163,7 +165,7 @@ def train(
             batch_size=args.batchsize,
             shuffle=True,
             drop_last=False,
-            device=torch.device(device),
+            device=device,
             use_uva=True,
         )
 
@@ -175,7 +177,7 @@ def train(
                 batch_size=args.batchsize,
                 shuffle=True,
                 drop_last=False,
-                device=torch.device(device),
+                device=device,
                 use_uva=True,
             )
 
@@ -185,11 +187,12 @@ def train(
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        batch_id = []
-        while len(batch_id) < size:
-            permutation = torch.randperm(pool_size).tolist()
-            batch_id += permutation
-        batch_id = batch_id[:size]
+        # batch_id = []
+        # while len(batch_id) < size:
+        #     permutation = torch.randperm(pool_size).tolist()
+        #     batch_id += permutation
+        # batch_id = batch_id[:size]
+        batch_id = torch.randperm(pool_size).tolist()
 
         threads = []
         (
@@ -270,13 +273,15 @@ def train(
             info_recorder[4] += x.numel()
 
             if args.debug:
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
-                input_feats = features[input_nodes].to(device)
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt").to(device)
+                input_feats = gather_pinned_tensor_rows(features, input_nodes)
                 assert torch.equal(x, input_feats)
+                # x = input_feats
 
             # tic = time.time()
             pred = model(blocks, x)
             loss = F.cross_entropy(pred, y)
+            tot_loss += loss.item()
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -294,7 +299,7 @@ def train(
         torch.cuda.synchronize()
         epoch_time = time.time() - start
 
-        if args.debug:
+        if args.debug and (epoch % args.log_every == 0 or epoch == args.num_epoch - 1):
             # --- valid ---#
             model.eval()
             valid_correct, valid_tot, val_acc = 0, 0, 0
@@ -339,12 +344,28 @@ def train(
                 best_epoch = epoch
 
             print(
+                f"Epoch: {epoch}\t"
                 f"Loss: {tot_loss:.10f}\t"
                 f"Valid acc: {val_acc * 100:.2f}%\t"
                 f"Test acc: {test_acc * 100:.2f}%\t"
             )
 
+            with open(acc_logfile, "a") as f:
+                writer = csv.writer(f, lineterminator="\n")
+                log_info = [
+                    epoch,
+                    round(tot_loss, 3),
+                    round(train_acc * 100, 2),
+                    round(val_acc * 100, 2),
+                    round(test_acc * 100, 2),
+                    round(best_val_acc * 100, 2),
+                    round(best_test_acc * 100, 2),
+                    best_epoch,
+                ]
+                writer.writerow(log_info)
+
         print(
+            f"Epoch: {epoch}\t"
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Train Time: {info_recorder[2]:.3f}\t"
@@ -421,7 +442,7 @@ def start(args):
     args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
 
     dc_config = json.load(open(f"{aux_dir}/dc_config.json", "r"))
-    args.disk_cache_num = dc_config["num_disk_cache"]
+    args.disk_cache_num = dc_config["disk_cache_num"]
     args.segment_size = dc_config["segment_size"]
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
@@ -456,6 +477,7 @@ if __name__ == "__main__":
     parser.add_argument("--ratio", type=float, default=1)
     parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--log_every", type=int, default=1)
     args = parser.parse_args()
     print(args)
     args.cpu_cache_size = int(args.cpu_cache_size)
