@@ -250,12 +250,13 @@ def run(dataset: OffgsDataset, args):
         disk_table[disk_cache] = torch.arange(cache_num, dtype=torch.int64)
         disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache.to(device))
         time_record[1] += time.time() - tic
-        tqdm.write(
-            f"\nDisk Cache Entries: {cache_num} / {dataset.num_nodes}\t"
-            f"Ratio: {cache_num / dataset.num_nodes:.3f}\t"
-            f"Ratio In Seg: {cache_num / (popularity > 0).sum().item():.3f}\t"
-            f"Access Cache Ratio: {popularity[disk_cache].sum().item() / popularity.sum().item():.3f}"
-        )
+        if (popularity > 0).sum().item() > 0:
+            tqdm.write(
+                f"\nDisk Cache Entries: {cache_num} / {dataset.num_nodes}\t"
+                f"Ratio: {cache_num / dataset.num_nodes:.3f}\t"
+                f"Ratio In Seg: {cache_num / (popularity > 0).sum().item():.3f}\t"
+                f"Access Cache Ratio: {popularity[disk_cache].sum().item() / popularity.sum().item():.3f}"
+            )
         total_disk_nodes += cache_num
 
         # build bipartite graph
@@ -372,7 +373,7 @@ def run(dataset: OffgsDataset, args):
         f"Disk Cache Search Time: {dc_search_time:.3f}\t"
         f"Original Blowup: {ori_io / dataset.num_nodes:.3f}\t"
         f"Opt Blowup: {total_disk_nodes / dataset.num_nodes:.3f}\t"
-        f"IO Traffic Amplification: {opt_io / ori_io:.3f}"
+        f"IO Traffic Amplification: {opt_io / ori_io if ori_io > 0 else 0:.3f}"
     )
     print(
         f"Init Cache Time: {cache_init_time:.3f}\t"
@@ -403,7 +404,7 @@ def run(dataset: OffgsDataset, args):
             total_disk_nodes,
             round(cache_init_time, 2),
             round(dc_search_time, 2),
-            round(opt_io / ori_io, 2),
+            round(opt_io / ori_io, 2) if ori_io > 0 else 0,
         ]
         for i in range(len(time_record)):
             log_info.append(round(time_record[i], 2))

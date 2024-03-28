@@ -70,7 +70,7 @@ def load_friendster(root: str, feature_dim: int, num_classes):
     data, _ = dgl.load_graphs(graph_path)
     g: dgl.DGLGraph = data[0].long()
     # train_nid = torch.nonzero(g.ndata["train_mask"], as_tuple=True)[0]
-    train_nid = torch.load(os.path.join(root, "train_010.pt"))
+    train_nid = torch.load(os.path.join(root, "train_001.pt"))
     test_nid = torch.nonzero(g.ndata["test_mask"], as_tuple=True)[0]
     val_nid = torch.nonzero(g.ndata["val_mask"], as_tuple=True)[0]
     splitted_idx = {"train": train_nid, "test": test_nid, "valid": val_nid}
