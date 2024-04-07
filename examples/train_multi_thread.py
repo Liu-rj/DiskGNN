@@ -6,16 +6,14 @@ import argparse
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-from load_graph import *
 from offgs.utils import SAGE, GAT
 from offgs.dataset import OffgsDataset
 import threading
 import queue
 import psutil
 import csv
-import atexit
-import utils
 import json
+import os
 
 import offgs
 
@@ -61,7 +59,6 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
                 dataset.num_features,
             )
             disk_feats[disk_rev_cold_idx] = cold_feats
-            torch.ops.offgs._CAPI_FreeTensor(cold_feats)
 
         torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
             f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",

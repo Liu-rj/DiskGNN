@@ -35,4 +35,4 @@ sudo env PATH=$PATH python feat_packing.py --dataset igb-full --fanout "10,15,20
 
 sudo env PATH=$PATH python train_multi_thread.py --dataset igb-full --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --gpu-cache-size 5e9 --cpu-cache-size 10e9 --dir /nvme1n1/offgs_dataset --ratio 0.1 --blowup -1
 sudo env PATH=$PATH python train_multi_thread.py --dataset igb-full --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --gpu-cache-size 15e9 --cpu-cache-size 30e9 --dir /nvme1n1/offgs_dataset --ratio 0.1 --blowup -1
-sudo env PATH=$PATH python train_multi_thread.py --dataset igb-full --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --gpu-cache-size 25e9 --cpu-cache-size 50e9 --dir /nvme1n1/offgs_dataset --ratio 0.1 --blowup -1
+sudo env PATH=$PATH python train_multi_thread.py --dataset igb-full --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --gpu-cache-size 15e9 --cpu-cache-size 60e9 --dir /nvme1n1/offgs_dataset --ratio 0.1 --blowup -1

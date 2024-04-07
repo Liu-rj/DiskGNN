@@ -3,20 +3,18 @@ from dgl.dataloading import DataLoader, NeighborSampler
 from dgl.utils import gather_pinned_tensor_rows
 import time
 import argparse
-from ctypes import *
-from ctypes.util import *
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-import pandas as pd
-from load_graph import *
 from offgs.utils import SAGE, GAT
 from offgs.dataset import OffgsDataset
-from queue import Queue
 import threading
+import queue
 import psutil
 import csv
-from dgl.utils import gather_pinned_tensor_rows
+import json
+import os
+
 import offgs
 
 
@@ -31,6 +29,8 @@ def train(
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
+    acc_logfile = f"acc/logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
+    torch.cuda.set_device(device)
 
     if args.debug:
         graph = dataset.graph
@@ -39,11 +39,11 @@ def train(
     cpu_cached_feats = cpu_cached_feats.pin_memory()
     label_offset = dataset.conf["label_offset"]
 
-    sampler = NeighborSampler([10, 10, 10])
+    sampler = NeighborSampler(fanout)
     if args.model == "SAGE":
         model = SAGE(
             dataset.num_features,
-            256,
+            args.hidden,
             dataset.num_classes,
             len(fanout),
             args.dropout,
@@ -51,19 +51,14 @@ def train(
     elif args.model == "GAT":
         model = GAT(
             dataset.num_features,
-            256,
+            args.hidden,
             dataset.num_classes,
-            [8, 2],
+            4,
+            len(fanout),
+            args.dropout,
         ).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    # train_nid = (
-    #     dataset.split_idx["train"]
-    #     if args.ratio == 1.0
-    #     else torch.load(f"{dataset_path}/train_idx_{args.ratio}.pt")
-    # )
-    # print(f"Train Node Ratio: {train_nid.numel() / dataset.num_nodes}")
-    # size = (train_nid.numel() + args.batchsize - 1) // args.batchsize
     train_num = dataset.split_idx["train"].numel()
     size = (train_num + args.batchsize - 1) // args.batchsize
     print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
@@ -77,7 +72,7 @@ def train(
             batch_size=args.batchsize,
             shuffle=True,
             drop_last=False,
-            device=torch.device(device),
+            device=device,
             use_uva=True,
         )
 
@@ -89,7 +84,7 @@ def train(
                 batch_size=args.batchsize,
                 shuffle=True,
                 drop_last=False,
-                device=torch.device(device),
+                device=device,
                 use_uva=True,
             )
 
@@ -102,11 +97,12 @@ def train(
         with open("/proc/sys/vm/drop_caches", "w") as stream:
             stream.write("1\n")
 
-        batch_id = []
-        while len(batch_id) < size:
-            permutation = torch.randperm(pool_size).tolist()
-            batch_id += permutation
-        batch_id = batch_id[:size]
+        # batch_id = []
+        # while len(batch_id) < size:
+        #     permutation = torch.randperm(pool_size).tolist()
+        #     batch_id += permutation
+        # batch_id = batch_id[:size]
+        batch_id = torch.randperm(pool_size).tolist()
 
         tot_loss = 0
         info_recorder = [0] * 9
@@ -381,7 +377,7 @@ def start(args):
 
     subg_dir = f"{args.dataset}-{args.batchsize}-{args.fanout}-{args.ratio}"
     subg_dir = os.path.join(args.dir, subg_dir)
-    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/{args.segment_size}-{args.disk_cache_num:g}"
+    aux_dir = f"{subg_dir}/cache-size-{total_cache_size:g}/blowup-{args.blowup}"
     dataset_dir = f"{args.dir}/{args.dataset}-offgs"
 
     # --- load data --- #
@@ -398,6 +394,10 @@ def start(args):
 
     args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
     args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
+
+    dc_config = json.load(open(f"{aux_dir}/dc_config.json", "r"))
+    args.disk_cache_num = dc_config["disk_cache_num"]
+    args.segment_size = dc_config["segment_size"]
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory Occupation:", mem1 - mem, "GB")
@@ -419,18 +419,19 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", default="friendster")
     parser.add_argument("--fanout", type=str, default="10,10,10")
     parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--hidden", type=int, default=256)
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
     parser.add_argument("--gpu-cache-size", type=float, default=0)
-    parser.add_argument("--disk-cache-num", type=float, default=0)
-    parser.add_argument("--segment-size", type=int, default=200)
+    # parser.add_argument("--disk-cache-num", type=float, default=1e6)
+    # parser.add_argument("--segment-size", type=int, default=100)
+    parser.add_argument("--blowup", type=float, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
-    parser.add_argument("--ratio", type=float, default=1.0)
-    parser.add_argument(
-        "--log", type=str, default="logs/train_single_thread_decompose.csv"
-    )
+    parser.add_argument("--ratio", type=float, default=1)
+    parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--log_every", type=int, default=1)
     args = parser.parse_args()
     print(args)
     args.cpu_cache_size = int(args.cpu_cache_size)
