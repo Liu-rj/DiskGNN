@@ -2,9 +2,33 @@
 
 ## Installation
 
+* Create a new env with python 3.9.18 and MKL 2023.2.0:
+
+```shell
+conda create -n pytorch2 python=3.9.18 mkl=2023.2.0
+```
+
+* Install Pytorch 2.0.1 with CUDA 11.7:
+
+```shell
+conda install pytorch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 pytorch-cuda=11.7 -c pytorch -c nvidia
+```
+
+* Install DGL with CUDA 11.7:
+
+```shell
+conda install dgl=1.1.2 -c dglteam/label/cu117
+```
+
+* Install PyG with CUDA 11.7:
+
+```shell
+conda install pyg=2.5.0 -c pyg
+```
+
 * Install [liburing](https://github.com/axboe/liburing).
 
-* Build and install (from the root directory of this repo)
+* Build and install (from the root directory of this repo):
 
 ```shell
 # build
