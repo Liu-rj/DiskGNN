@@ -24,6 +24,9 @@ conda install dgl=1.1.2 -c dglteam/label/cu117
 
 ```shell
 conda install pyg=2.5.0 -c pyg
+
+# additional packages
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.0.0+cu117.html
 ```
 
 * Install [liburing](https://github.com/axboe/liburing).
