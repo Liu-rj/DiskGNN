@@ -14,8 +14,8 @@ font_size = 16
 
 import csv
 
-# file_path = "../offgs_data/read_io.csv"
-file_path="/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/offgs_data/read_io.csv"
+file_path = "../offgs_data/read_io.csv"
+# file_path="/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/offgs_data/read_io.csv"
 with open(file_path, mode="r", newline="") as file:
     reader = csv.reader(file)
     data = list(reader)
@@ -129,7 +129,7 @@ axes[0].legend(
     prop={"weight": "bold", "size": font_size},
 ).set_zorder(100)
 
-axes[0].set_ylabel("Normalized Runtime", fontsize=font_size)
+axes[0].set_ylabel("Read I/O (\\textit{GB})", fontsize=font_size)
 # axes[0].set_yticklabels(yticks, fontsize=font_size)
 # axes[1].set_yticklabels([])
 file_name = f"{SAVE_PTH}/read_io.pdf"
