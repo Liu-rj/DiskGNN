@@ -64,7 +64,6 @@ for i, stats in enumerate(all_statistics):
         pivot = stats[0]
     statistics_normalized = [round(stat / pivot, 2) for stat in stats]
     all_new_normalized_statistics.append(statistics_normalized)
-
 for line_num in line_nums:
 
     fig, axes = plt.subplots(1, 2)
