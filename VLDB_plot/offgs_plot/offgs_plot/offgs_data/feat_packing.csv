@@ -1,0 +1,5 @@
+Dataset,Primitive Feature Read,Optimized Feature Read,Primitive Preprocessing Time,Optimized Preprocessing Time
+Friendster,1468.86,22.2,1638.54,186.17
+IGB-HOM,12309.04,81.39,14055.88,1431.51
+Ogbn-papers100M,646.01,29.9,754.64,107.78
+MAG240M,323.95,63.51,398.48,106.23
