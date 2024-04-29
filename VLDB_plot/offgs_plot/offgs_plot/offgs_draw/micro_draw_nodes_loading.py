@@ -62,6 +62,7 @@ log_ticks = np.logspace(0, 4, num=5, base=10)  # 1, 10, 100, 1000, 10000
 from matplotlib.ticker import LogFormatterSciNotation
 
 for i in range(2):
+
  
     axes[i].set_yscale('log')
 
@@ -90,6 +91,7 @@ for i in range(2):
     # axes[i].set_xticklabels([], fontsize=8)
     axes[i].set_xlabel(dataset[i], fontsize=font_size)
     axes[i].grid(axis="y", linestyle="--")
+
     for j in range(n):
         ##TODO add label
         # plot_label= [data[j] for data in all_new_normalized_statistics[(line_num-1)*6+i*group:(line_num-1)*6+i*group+3]]
@@ -97,7 +99,8 @@ for i in range(2):
         plot_label = true_num
         container = axes[i].bar(
             exit_idx_x + j * width,
-            [true_num_ if true_num_>1 else 1 for true_num_ in true_num],
+            [true_num_ if true_num_>0 else 0 for true_num_ in true_num],
+            bottom=1,
             width=width * 0.7,
             color="white",
             edgecolor="k",
@@ -109,7 +112,9 @@ for i in range(2):
         axes[i].bar_label(
             container, plot_label, fontsize=font_size - 6, zorder=200, fontweight="bold"
         )
-
+    axes[i].spines['bottom'].set_linestyle('-')
+    axes[i].spines['bottom'].set_linewidth(1.5)  # 这里可以调整线的宽度
+    axes[i].spines['bottom'].set_color('black')
 
 axes[0].legend(
     bbox_to_anchor=(1.6, 1.0),

@@ -79,7 +79,7 @@ for line_num in line_nums:
     # hatches = ["/////", "\\\\\\\\\\"]
     hatches = ["", "//", "x", "|||", "---", "...", "||", "xx", "oo", ".."]
 
-    labels = ["Our", "MariusGNN", "Ginex", "Ginex+Sample"]
+    labels = ["DiskGNN", "MariusGNN", "Ginex", "Ginex+Sample"]
     if line_num == 1:
         x_labels = [all_configs[0][0], all_configs[3][0]]
     else:
