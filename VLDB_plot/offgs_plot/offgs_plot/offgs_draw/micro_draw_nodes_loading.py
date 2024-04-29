@@ -79,7 +79,7 @@ for i in range(2):
         axes[i].get_yaxis().set_tick_params(labelleft=False)
     
     # 设置y轴的显示范围
-    axes[i].set_ylim(1, 13000)
+    axes[i].set_ylim(0.5, 15000)
 
     # 设置刻度标签大小
     axes[i].tick_params(axis="y", labelsize=14)
@@ -100,7 +100,7 @@ for i in range(2):
         container = axes[i].bar(
             exit_idx_x + j * width,
             [true_num_ if true_num_>0 else 0 for true_num_ in true_num],
-            bottom=1,
+            bottom=0.5,
             width=width * 0.7,
             color="white",
             edgecolor="k",
@@ -112,9 +112,9 @@ for i in range(2):
         axes[i].bar_label(
             container, plot_label, fontsize=font_size - 6, zorder=200, fontweight="bold"
         )
-    axes[i].spines['bottom'].set_linestyle('-')
-    axes[i].spines['bottom'].set_linewidth(1.5)  # 这里可以调整线的宽度
-    axes[i].spines['bottom'].set_color('black')
+    # axes[i].spines['bottom'].set_linestyle('-')
+    # axes[i].spines['bottom'].set_linewidth(1.5)  # 这里可以调整线的宽度
+    # axes[i].spines['bottom'].set_color('black')
 
 axes[0].legend(
     bbox_to_anchor=(1.6, 1.0),
