@@ -2,10 +2,18 @@ import numpy as np
 import itertools
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+from matplotlib import font_manager
 import csv
 
+# font_dirs = ["/home/ubuntu/helvetica-255"]
+# font_files = font_manager.findSystemFonts(fontpaths=font_dirs)
+
+# for font_file in font_files:
+#     font_manager.fontManager.addfont(font_file)
+
 color_list = ["r", "g", "c", "m", "k"]
-# marker_list = ["o", "x", "v", "*", "^"]
+marker_list = ["*", "v", "o", "x", "^"]
+marker_size_list = [15, 10, 10, 10, 10]
 
 # zuo_green = "#5daa2d"
 # zuo_oriange = "#f2883f"
@@ -33,6 +41,12 @@ def plt_init(figsize=None, labelsize=24, subplot_flag=False):
         plt.figure(figsize=figsize)
 
     plt.clf()
+    plt.rcParams["font.family"] = "Helvetica"
+    plt.rcParams["ytick.direction"] = "in"
+    plt.rcParams["hatch.linewidth"] = 1
+    plt.rcParams["font.weight"] = "bold"
+    plt.rcParams["axes.labelweight"] = "bold"
+    plt.rcParams["text.usetex"] = True
     if not subplot_flag:
         ax = plt.gca()
         ax.tick_params(

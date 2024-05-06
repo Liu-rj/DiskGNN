@@ -44,9 +44,17 @@ for row in data[1:]:
         row[j] = str(round(float(row[j]) / normalize, 2))
 ##
 print("after normalization")
-for row in data:
-
+speedup_list = []
+marius_preprocess = []
+for it, row in enumerate(data):
     print(",".join(row))
+    if it > 0:
+        marius_preprocess.append(row[3])
+        if it == 7 or it == 8:
+            speedup_list += row[4:-2]
+        else:
+            speedup_list += row[4:-1]
+print("Average Speedup:", np.mean([float(x) for x in speedup_list]))
 
 
 models = ["SAGE", "GAT"]
@@ -150,4 +158,3 @@ for k, model in enumerate(models):
     plt.savefig(f"{SAVE_PTH }/speed_{model}.pdf", bbox_inches="tight", dpi=300)
     ## print save
     print(f"{SAVE_PTH }/speed_{model}.pdf")
-    # %%

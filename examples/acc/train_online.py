@@ -22,7 +22,7 @@ def train(
 ):
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
-    acc_logfile = f"logs/online_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}.csv"
+    acc_logfile = f"logs/online_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
 
     labels = dataset.labels.pin_memory()
     print("features shape:", features.shape)
@@ -51,9 +51,15 @@ def train(
         ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+    train_nid = (
+        dataset.split_idx["train"]
+        if args.ratio == 1.0
+        else torch.load(f"{args.dir}/{args.dataset}-offgs/train_idx_{args.ratio}.pt")
+    )
+
     train_dataloader = DataLoader(
         graph,
-        dataset.split_idx["train"],
+        train_nid,
         sampler,
         batch_size=args.batchsize,
         shuffle=True,
@@ -251,6 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="SAGE")
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--num-epoch", type=int, default=3)
+    parser.add_argument("--ratio", type=float, default=1.0)
     parser.add_argument("--log", type=str, default="../logs/train_online_acc.csv")
     args = parser.parse_args()
     print(args)

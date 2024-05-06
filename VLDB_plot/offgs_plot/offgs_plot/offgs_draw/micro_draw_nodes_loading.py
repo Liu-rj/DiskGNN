@@ -11,9 +11,6 @@ plt.rcParams["text.usetex"] = True
 SAVE_PTH = "../figures"
 font_size = 16
 
-
-import csv
-
 file_path = "../offgs_data/read_io.csv"
 # file_path="/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/offgs_data/read_io.csv"
 with open(file_path, mode="r", newline="") as file:
@@ -35,11 +32,11 @@ for i, row in enumerate(data):
     else:
         statistics = row[2:]
         ## convert to float
-        statistics=[round(float(stat),2) for stat in statistics]
-        statistics[-2],statistics[-1]=statistics[-1],statistics[-2]
+        statistics = [round(float(stat), 2) for stat in statistics]
+        statistics[-2], statistics[-1] = statistics[-1], statistics[-2]
         statistics = [float(stat) for stat in statistics]
         all_statistics.append(statistics)
-        
+
 print("finish preprocessing")
 print(all_statistics)
 fig, axes = plt.subplots(1, 2)
@@ -54,7 +51,7 @@ exit_idx_x = x + (total_width - width) / n
 edgecolors = ["dimgrey", "lightseagreen", "tomato", "slategray", "silver"]
 hatches = ["", "//", "xx", "--", ""]
 labels = all_configs[0][1:]
-labels[1],labels[2]=labels[2],labels[1]
+labels[1], labels[2] = labels[2], labels[1]
 
 x_labels = dataset
 
@@ -63,8 +60,7 @@ from matplotlib.ticker import LogFormatterSciNotation
 
 for i in range(2):
 
- 
-    axes[i].set_yscale('log')
+    axes[i].set_yscale("log")
 
     # 设置y轴刻度
     axes[i].set_yticks(log_ticks)
@@ -77,16 +73,15 @@ for i in range(2):
     # 第二个图不显示刻度标签
     if i == 1:
         axes[i].get_yaxis().set_tick_params(labelleft=False)
-    
+
     # 设置y轴的显示范围
     axes[i].set_ylim(0.5, 15000)
 
     # 设置刻度标签大小
     axes[i].tick_params(axis="y", labelsize=14)
-    axes[i].set_xticks(exit_idx_x+0.9)
-    
-    
-    axes[i].set_xticklabels(["10\%","30\%","50\%"], fontsize=font_size-2)
+    axes[i].set_xticks(exit_idx_x + 0.9)
+
+    axes[i].set_xticklabels(["10\%", "30\%", "50\%"], fontsize=font_size - 2)
 
     # axes[i].set_xticklabels([], fontsize=8)
     axes[i].set_xlabel(dataset[i], fontsize=font_size)
@@ -95,11 +90,11 @@ for i in range(2):
     for j in range(n):
         ##TODO add label
         # plot_label= [data[j] for data in all_new_normalized_statistics[(line_num-1)*6+i*group:(line_num-1)*6+i*group+3]]
-        true_num=[ percent[j] for percent in all_statistics[i*3:i*3+3]]
+        true_num = [percent[j] for percent in all_statistics[i * 3 : i * 3 + 3]]
         plot_label = true_num
         container = axes[i].bar(
             exit_idx_x + j * width,
-            [true_num_ if true_num_>0 else 0 for true_num_ in true_num],
+            [true_num_ if true_num_ > 0 else 0 for true_num_ in true_num],
             bottom=0.5,
             width=width * 0.7,
             color="white",
@@ -135,10 +130,12 @@ axes[0].legend(
 ).set_zorder(100)
 
 axes[0].set_ylabel("Read I/O (\\textit{GB})", fontsize=font_size)
-# axes[0].set_yticklabels(yticks, fontsize=font_size)
+# axes[0].set_yticklabels(
+#     ["10^1", "10\\^{2}", "10\\^{3}", "10\\^{4}", "10\\^{5}"],
+#     fontsize=font_size,
+# )
 # axes[1].set_yticklabels([])
 file_name = f"{SAVE_PTH}/read_io.pdf"
 plt.savefig(file_name, bbox_inches="tight", dpi=300)
 ## print save
 print(f"Save to {file_name}")
-# %%
