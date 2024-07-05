@@ -1,8 +1,0 @@
-LJ,PD,PP,FS
-GraphSAGE
-cuGraph,5.06,1.64,N/A(load graph takes too long),642.73
-GunRock,0.54,0.22,N/A(no UVA),N/A(no UVA)
-SkyWalker,0.66,0.34,1.81,2.12
-PyG,18.48,13.99,784.09,N/A(Error)
-DGL,1.32,0.53,4.42,3.13
-gSampler,0.03,0.02,1.11,0.82

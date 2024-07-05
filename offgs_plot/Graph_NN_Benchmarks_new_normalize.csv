@@ -1,9 +1,0 @@
-Graph,Algorithm,Our,Our+Preprocessing,Marius,Ginex,Ginex+sample
-Ogbn-papers100M,SAGE,1.0,1.03,2.16,7.61,54.57
-Ogbn-papers100M,GAT,1.0,1.02,5.0,6.07,45.42
-MAG240M,SAGE,1.0,1.04,2.7,8.42,58.42
-MAG240M,GAT,1.0,1.03,2.49,6.76,45.29
-Friendster,SAGE,1.0,1.04,0.9,8.76,26.34
-Friendster,GAT,1.0,1.03,1.22,7.82,23.56
-IGB-HOM,SAGE,1.0,1.03,1.44,7.95,29.81
-IGB-HOM,GAT,1.0,1.03,1.87,6.85,27.32
