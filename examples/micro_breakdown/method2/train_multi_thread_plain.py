@@ -26,127 +26,33 @@ def load_graph(queue, path, batch_id, labels, label_offset):
         queue.put((blocks, y))
 
 
-def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
+def load_meta(feat_load_queue, batch_id, subg_path):
     for i in batch_id:
-        (
-            disk_cold,
-            disk_rev_cold_idx,
-            disk_loc,
-            disk_rev_hot_idx,
-            rev_cold_idx,
-            mem_loc,
-            rev_hot_idx,
-        ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
-        feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
-        transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
+        input_nodes = torch.load(f"{subg_path}/in-nid-{i}.pt")
+        feat_load_queue.put(input_nodes)
 
 
-def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
+def load_feats(in_queue, out_queue, batch_id, dataset):
     torch.ops.offgs._CAPI_Init_iouring()
     for i in batch_id:
-        disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx = in_queue.get()
-        num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
-        disk_feats = torch.empty(
-            (num_disk, dataset.num_features),
-            dtype=torch.float32,
-            pin_memory=True,
+        input_nodes = in_queue.get()
+        feats = torch.ops.offgs._CAPI_GatherIOUringDirect(
+            dataset.features_path, input_nodes, dataset.num_features
         )
-
-        if disk_cold.numel() > 0:
-            cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                f"{aux_dir}/feat/train-aux-{i}.bin",
-                disk_cold.numel(),
-                dataset.num_features,
-            )
-            disk_feats[disk_rev_cold_idx] = cold_feats
-            torch.ops.offgs._CAPI_FreeTensor(cold_feats)
-
-        torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-            f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
-            disk_feats,
-            disk_loc,
-            disk_rev_hot_idx,
-            dataset.num_features,
-        )
-
-        out_queue.put(disk_feats)
+        out_queue.put(feats)
     torch.ops.offgs._CAPI_Exit_iouring()
 
 
 def feat_transfer(
-    in_queue,
     disk_feats_queue,
     out_queue,
-    cpu_cached_feats,
-    gpu_cached_feats,
     batch_id,
-    dataset,
     device,
 ):
     for i in batch_id:
-        rev_cold_idx, mem_loc, rev_hot_idx = in_queue.get()
-        disk_feats = disk_feats_queue.get()
-        num_disk = rev_cold_idx.numel()
-
-        num_input = num_disk + mem_loc.numel()
-        x = torch.empty(
-            (num_input, dataset.num_features),
-            dtype=torch.float32,
-            device=device,
-        )
-        if num_disk > 0:
-            x[rev_cold_idx] = disk_feats.to(device)
-        s = torch.cuda.Stream(device)
-        with torch.cuda.stream(s):
-            torch.ops.offgs._CAPI_GatherInGPU(
-                x,
-                rev_hot_idx.to(device),
-                cpu_cached_feats,
-                gpu_cached_feats,
-                mem_loc.to(device),
-            )
-        s.synchronize()
+        feats = disk_feats_queue.get()
+        x = feats.to(device)
         out_queue.put(x)
-
-
-def evaluate(
-    model, val_dataloader, test_dataloader, features, labels, label_offset, device
-):
-    # --- valid ---#
-    model.eval()
-    valid_correct, valid_tot, val_acc = 0, 0, 0
-    for it, (input_nodes, output_nodes, blocks) in enumerate(
-        tqdm(val_dataloader, ncols=100)
-    ):
-        blocks = [block.to(device) for block in blocks]
-        x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-        # x = features[input_nodes.cpu()].to(device)
-        y = gather_pinned_tensor_rows(labels, output_nodes - label_offset).long()
-        pred = model(blocks, x)
-        correct = (pred.argmax(dim=1) == y).sum().item()
-        total = y.shape[0]
-        valid_correct += correct
-        valid_tot += total
-    val_acc = valid_correct / valid_tot
-
-    # --- test --- #
-    model.eval()
-    test_correct, test_tot, test_acc = 0, 0, 0
-    if args.dataset != "mag240m":
-        for it, (input_nodes, output_nodes, blocks) in enumerate(
-            tqdm(test_dataloader, ncols=100)
-        ):
-            blocks = [block.to(device) for block in blocks]
-            x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-            # x = features[input_nodes.cpu()].to(device)
-            y = gather_pinned_tensor_rows(labels, output_nodes - label_offset).long()
-            pred = model(blocks, x)
-            correct = (pred.argmax(dim=1) == y).sum().item()
-            total = y.shape[0]
-            test_correct += correct
-            test_tot += total
-        test_acc = test_correct / test_tot
-    return val_acc, test_acc
 
 
 def train(
@@ -160,7 +66,7 @@ def train(
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
-    acc_logfile = f"logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
+    acc_logfile = f"acc/logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
     torch.cuda.set_device(device)
 
     if args.debug:
@@ -207,7 +113,6 @@ def train(
             use_uva=True,
         )
 
-        test_dataloader = None
         if args.dataset != "mag240m":
             test_dataloader = DataLoader(
                 graph,
@@ -221,36 +126,6 @@ def train(
             )
 
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
-    val_acc, test_acc = evaluate(
-        model,
-        val_dataloader,
-        test_dataloader,
-        features,
-        labels,
-        label_offset,
-        device,
-    )
-
-    print(
-        f"Epoch: 0\t"
-        f"Valid acc: {val_acc * 100:.2f}%\t"
-        f"Test acc: {test_acc * 100:.2f}%\t"
-    )
-
-    with open(acc_logfile, "a") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        log_info = [
-            0,
-            round(-1, 3),
-            round(-1, 2),
-            round(val_acc * 100, 2),
-            round(test_acc * 100, 2),
-            round(best_val_acc * 100, 2),
-            round(best_test_acc * 100, 2),
-            best_epoch,
-        ]
-        writer.writerow(log_info)
-
     epoch_info_recorder = [[] for i in range(6)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -261,7 +136,8 @@ def train(
         #     permutation = torch.randperm(pool_size).tolist()
         #     batch_id += permutation
         # batch_id = batch_id[:size]
-        batch_id = torch.randperm(pool_size).tolist()
+        # batch_id = torch.randperm(pool_size).tolist()
+        batch_id = torch.arange(pool_size // 100).tolist()
 
         threads = []
         (
@@ -280,45 +156,39 @@ def train(
             )
         )
 
-        # threads.append(
-        #     threading.Thread(
-        #         target=load_meta,
-        #         args=(feat_load_queue, transfer_queue, aux_dir, batch_id),
-        #         daemon=True,
-        #     )
-        # )
+        threads.append(
+            threading.Thread(
+                target=load_meta,
+                args=(feat_load_queue, batch_id, subg_dir),
+                daemon=True,
+            )
+        )
 
-        # threads.append(
-        #     threading.Thread(
-        #         target=load_feats,
-        #         args=(
-        #             feat_load_queue,
-        #             disk_feat_queue,
-        #             aux_dir,
-        #             batch_id,
-        #             dataset,
-        #             args.segment_size,
-        #         ),
-        #         daemon=True,
-        #     )
-        # )
+        threads.append(
+            threading.Thread(
+                target=load_feats,
+                args=(
+                    feat_load_queue,
+                    disk_feat_queue,
+                    batch_id,
+                    dataset,
+                ),
+                daemon=True,
+            )
+        )
 
-        # threads.append(
-        #     threading.Thread(
-        #         target=feat_transfer,
-        #         args=(
-        #             transfer_queue,
-        #             disk_feat_queue,
-        #             feature_queue,
-        #             cpu_cached_feats,
-        #             gpu_cached_feats,
-        #             batch_id,
-        #             dataset,
-        #             device,
-        #         ),
-        #         daemon=True,
-        #     )
-        # )
+        threads.append(
+            threading.Thread(
+                target=feat_transfer,
+                args=(
+                    disk_feat_queue,
+                    feature_queue,
+                    batch_id,
+                    device,
+                ),
+                daemon=True,
+            )
+        )
 
         for t in threads:
             t.start()
@@ -331,21 +201,21 @@ def train(
 
         model.train()
         train_correct, train_tot, train_acc = 0, 0, 0
-        for it, i in tqdm(enumerate(batch_id), ncols=100):
-            # tic = time.time()
+        for i in tqdm(batch_id, ncols=100):
+            tic = time.time()
             blocks, y = graph_queue.get()
             blocks = [block.to(device, non_blocking=True) for block in blocks]
             y = y.to(device, non_blocking=True)
-            # info_recorder[0] += time.time() - tic  # graph load
 
-            # x = feature_queue.get()
-            # info_recorder[4] += x.numel()
+            x = feature_queue.get()
+            info_recorder[0] += time.time() - tic  # data load
+            info_recorder[4] += x.numel()
 
             if args.debug:
                 input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt").to(device)
                 input_feats = gather_pinned_tensor_rows(features, input_nodes)
-                # assert torch.equal(x, input_feats)
-                x = input_feats
+                assert torch.equal(x, input_feats)
+                # x = input_feats
 
             # tic = time.time()
             pred = model(blocks, x)
@@ -362,46 +232,6 @@ def train(
             # default_stream.synchronize()
             # info_recorder[2] += time.time() - tic  # train
 
-            if epoch == 0 and it in [
-                len(batch_id) // 500,
-                len(batch_id) // 100,
-                len(batch_id) // 10,
-                len(batch_id) // 5,
-                len(batch_id) // 2,
-            ]:
-                train_acc = train_correct / train_tot
-                val_acc, test_acc = evaluate(
-                    model,
-                    val_dataloader,
-                    test_dataloader,
-                    features,
-                    labels,
-                    label_offset,
-                    device,
-                )
-
-                print(
-                    f"Epoch: {(it + 1) / len(batch_id)}\t"
-                    f"Loss: {tot_loss:.10f}\t"
-                    f"Valid acc: {val_acc * 100:.2f}%\t"
-                    f"Test acc: {test_acc * 100:.2f}%\t"
-                )
-                model.train()
-
-                with open(acc_logfile, "a") as f:
-                    writer = csv.writer(f, lineterminator="\n")
-                    log_info = [
-                        round((it + 1) / len(batch_id), 3),
-                        round(tot_loss, 3),
-                        round(train_acc * 100, 2),
-                        round(val_acc * 100, 2),
-                        round(test_acc * 100, 2),
-                        round(best_val_acc * 100, 2),
-                        round(best_test_acc * 100, 2),
-                        best_epoch,
-                    ]
-                    writer.writerow(log_info)
-
         train_acc = train_correct / train_tot
         for t in threads:
             t.join()
@@ -409,15 +239,44 @@ def train(
         epoch_time = time.time() - start
 
         if args.debug and (epoch % args.log_every == 0 or epoch == args.num_epoch - 1):
-            val_acc, test_acc = evaluate(
-                model,
-                val_dataloader,
-                test_dataloader,
-                features,
-                labels,
-                label_offset,
-                device,
-            )
+            # --- valid ---#
+            model.eval()
+            valid_correct, valid_tot, val_acc = 0, 0, 0
+            for it, (input_nodes, output_nodes, blocks) in enumerate(
+                tqdm(val_dataloader, ncols=100)
+            ):
+                blocks = [block.to(device) for block in blocks]
+                x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                # x = features[input_nodes.cpu()].to(device)
+                y = gather_pinned_tensor_rows(
+                    labels, output_nodes - label_offset
+                ).long()
+                pred = model(blocks, x)
+                correct = (pred.argmax(dim=1) == y).sum().item()
+                total = y.shape[0]
+                valid_correct += correct
+                valid_tot += total
+            val_acc = valid_correct / valid_tot
+
+            # --- test --- #
+            model.eval()
+            test_correct, test_tot, test_acc = 0, 0, 0
+            if args.dataset != "mag240m":
+                for it, (input_nodes, output_nodes, blocks) in enumerate(
+                    tqdm(test_dataloader, ncols=100)
+                ):
+                    blocks = [block.to(device) for block in blocks]
+                    x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                    # x = features[input_nodes.cpu()].to(device)
+                    y = gather_pinned_tensor_rows(
+                        labels, output_nodes - label_offset
+                    ).long()
+                    pred = model(blocks, x)
+                    correct = (pred.argmax(dim=1) == y).sum().item()
+                    total = y.shape[0]
+                    test_correct += correct
+                    test_tot += total
+                test_acc = test_correct / test_tot
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_test_acc = test_acc
@@ -463,6 +322,7 @@ def train(
     with open(args.log, "a") as f:
         writer = csv.writer(f, lineterminator="\n")
         log_info = [
+            "Plain",
             args.dataset,
             args.fanout,
             args.batchsize,
@@ -470,6 +330,8 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
+            args.ratio,
+            args.blowup,
             f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
@@ -550,10 +412,12 @@ if __name__ == "__main__":
     parser.add_argument("--dir", type=str, default="/nvme1n1/offgs_dataset")
     parser.add_argument("--cpu-cache-size", type=float, default=1e10)
     parser.add_argument("--gpu-cache-size", type=float, default=1e10)
+    # parser.add_argument("--disk-cache-num", type=float, default=1e6)
+    # parser.add_argument("--segment-size", type=int, default=100)
     parser.add_argument("--blowup", type=float, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)
-    parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
+    parser.add_argument("--log", type=str, default="train_multi_thread.csv")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--log_every", type=int, default=1)
     args = parser.parse_args()

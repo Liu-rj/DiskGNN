@@ -12,7 +12,12 @@ SAVE_PTH = "../figures"
 font_size = 16
 
 
-import csv
+cache_sizes = {
+    "Ogbn-papers100M": [5, 15, 25],
+    "MAG240M": [10, 30, 50],
+    "Friendster": [3, 9, 15],
+    "IGB-HOM": [15, 45, 75],
+}
 
 line_nums = [1, 2]
 file_path = "../offgs_data/vary_cache.csv"
@@ -95,7 +100,15 @@ for line_num in line_nums:
         axes[i].tick_params(axis="y", labelsize=10)  # 设置 y 轴刻度标签的字体大小
 
         axes[i].set_xticks([1.6, 4.6, 7.6])
-        axes[i].set_xticklabels(["10\%", "30\%", "50\%"], fontsize=font_size)
+        cache_size = cache_sizes[x_labels[i]]
+        axes[i].set_xticklabels(
+            [
+                f"{cache_size[0]}GB (10\%)",
+                f"{cache_size[1]}GB (30\%)",
+                f"{cache_size[2]}GB (50\%)",
+            ],
+            fontsize=font_size - 2,
+        )
         axes[i].set_xlabel(x_labels[i], fontsize=font_size)
         axes[i].grid(axis="y", linestyle="--")
         for j in range(n):

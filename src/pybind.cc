@@ -14,6 +14,7 @@ TORCH_LIBRARY(offgs, m) {
   m.def("_CAPI_GatherMemMap", &GatherMemMap);
   m.def("_CAPI_GatherPRead", &GatherPRead);
   m.def("_CAPI_GatherPReadDirect", &GatherPReadDirect);
+  m.def("_CAPI_GatherIOUringDirect", &GatherIOUringDirect);
   m.def("_CAPI_GatherInMem", &GatherInMem);
   m.def("_CAPI_GatherInGPU", &cuda::GatherInGPU);
   m.def("_CAPI_GatherInGPU_MegaBatch", &cuda::GatherInGPU_MegaBatch);

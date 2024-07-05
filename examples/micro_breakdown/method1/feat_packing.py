@@ -112,6 +112,7 @@ def run(dataset: OffgsDataset, args):
 
     time_record = [0] * 11
     ori_io, opt_io, total_disk_nodes = 0, 0, 0
+    exit_flag = False
     for segid in trange(num_segments, ncols=100):
         startid = segid * segment_size
         endid = min((segid + 1) * segment_size, num_batches)
@@ -253,6 +254,13 @@ def run(dataset: OffgsDataset, args):
             )
             time_record[10] += time.time() - tic
 
+            if bid == num_batches // 100:
+                exit_flag = True
+                break
+
+        if exit_flag:
+            break
+
     total_time = dc_search_time + cache_init_time + np.sum(time_record)
     print(
         f"Disk Cache Search Time: {dc_search_time:.3f}\t"
@@ -308,7 +316,7 @@ if __name__ == "__main__":
     parser.add_argument("--feat-cache-size", type=float, default=1e10)
     parser.add_argument("--ratio", type=float, default=1.0)
     parser.add_argument("--blowup", type=float, default=-1)
-    parser.add_argument("--log", type=str, default="logs/pack_decompose.csv")
+    parser.add_argument("--log", type=str, default="pack_decompose.csv")
     args = parser.parse_args()
     print(args)
     args.feat_cache_size = int(args.feat_cache_size)

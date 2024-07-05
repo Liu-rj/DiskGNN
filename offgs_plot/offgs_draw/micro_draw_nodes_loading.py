@@ -11,6 +11,13 @@ plt.rcParams["text.usetex"] = True
 SAVE_PTH = "../figures"
 font_size = 16
 
+cache_sizes = {
+    "Ogbn-papers100M": [5, 15, 25],
+    "MAG240M": [10, 30, 50],
+    "Friendster": [3, 9, 15],
+    "IGB-HOM": [15, 45, 75],
+}
+
 file_path = "../offgs_data/read_io.csv"
 # file_path="/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/offgs_data/read_io.csv"
 with open(file_path, mode="r", newline="") as file:
@@ -81,7 +88,15 @@ for i in range(2):
     axes[i].tick_params(axis="y", labelsize=14)
     axes[i].set_xticks(exit_idx_x + 0.9)
 
-    axes[i].set_xticklabels(["10\%", "30\%", "50\%"], fontsize=font_size - 2)
+    cache_size = cache_sizes[dataset[i]]
+    axes[i].set_xticklabels(
+        [
+            f"{cache_size[0]}GB (10\%)",
+            f"{cache_size[1]}GB (30\%)",
+            f"{cache_size[2]}GB (50\%)",
+        ],
+        fontsize=font_size - 2,
+    )
 
     # axes[i].set_xticklabels([], fontsize=8)
     axes[i].set_xlabel(dataset[i], fontsize=font_size)

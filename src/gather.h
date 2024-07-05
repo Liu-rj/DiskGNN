@@ -13,6 +13,10 @@ torch::Tensor GatherPRead(const std::string& feature_file,
 torch::Tensor GatherPReadDirect(const std::string& feature_file,
                                 const torch::Tensor& idx, int64_t feature_dim);
 
+torch::Tensor GatherIOUringDirect(const std::string& feature_file,
+                                  const torch::Tensor& idx,
+                                  int64_t feature_dim);
+
 void GatherInMem(torch::Tensor& out, const torch::Tensor& out_idx,
                  const torch::Tensor& in, const torch::Tensor& in_idx,
                  const torch::Tensor& map_table);
