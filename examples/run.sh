@@ -39,7 +39,7 @@ sudo env PATH=$PATH python train_multi_thread.py --dataset friendster --fanout "
 
 
 # IGB-FULL
-python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/rjliu/dataset/igb_full --store-path $data_path
+python prepare_dataset.py --dataset igb-full --dataset_size full --path /efs/user/dataset/igb_full --store-path $data_path
 sudo env PATH=$PATH python sampling.py --dataset igb-full --fanout "10,15,20" --store-path $data_path --ratio 0.1
 sudo env PATH=$PATH python feat_packing.py --dataset igb-full --fanout "10,15,20" --feat-cache-size 15e9 --store-path $data_path --ratio 0.1 --blowup -1
 # speed
