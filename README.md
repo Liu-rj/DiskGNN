@@ -1,4 +1,4 @@
-# DiskGNN for Out-of-core GNN Training
+# DiskGNN: Bridging I/O Efficiency and Model Accuracy for Out-of-Core GNN Training
 
 ## Installation
 
@@ -46,7 +46,7 @@ The following example runs DiskGNN on the GraphSAGE model and Ogbn-papers100M da
 
 - cd into the example directory (from the root directory of this repo):
 
-```
+```shell
 cd example
 ```
 
