@@ -1,4 +1,4 @@
-# OfflineSampling for Out-of-core GNN Training
+# DiskGNN for Out-of-core GNN Training
 
 ## Installation
 
@@ -42,6 +42,16 @@ cd ../python; python setup.py install
 
 ## Usage
 
+### Main result
+
+illustrate one dataset and graph model using graphsage and papers100M
+
+- cd in the example pth
+
+```
+cd example
+```
+
 * Prepare dataset
 
 ```shell
@@ -51,32 +61,75 @@ python prepare_dataset.py --dataset=ogbn-products
 * Offline sampling
 
 ```shell
-sudo env PATH=$PATH python sampling.py --dataset=ogbn-products --fanout="10,10,10"
+sudo env PATH=$PATH python sampling.py --dataset ogbn-papers100M --fanout "10,15,20" --store-path /nvme2n1/offgs_dataset --ratio 1.0
 ```
 
-* Cold feature packing
+* Cold feature packing/ data layout preprocessing
 
 ```shell
-sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=2e8
+sudo env PATH=$PATH python feat_packing.py --dataset ogbn-papers100M --fanout "10,15,20" --feat-cache-size 5e9 --store-path /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1
 ```
 
-* Online training
+* Online training efficiency test
 
 ```shell
-sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=2e8
+sudo env PATH=$PATH python train_multi_thread.py --dataset ogbn-papers100M --fanout "10,15,20" --hidden 256 --dropout 0.2 --model SAGE --gpu-cache-size 2e9 --cpu-cache-size 3e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1
 ```
 
-### for accelerate preprocessing
-previous steps are the same
+- Online training accuracy test
 
-* Cold feature packing
+```shell
+sudo env PATH=$PATH python train_multi_thread.py --dataset ogbn-papers100M --fanout "10,15,20" --hidden 256 --dropout 0.2 --model SAGE --gpu-cache-size 2e9 --cpu-cache-size 3e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1 --device 1 --num-epoch 50 --debug
+```
+
+**the full experiment script is in examples/run.sh**
+
+### Batched Packing
+
+sample and dataset prepare these previous steps are the same
+
+you should select a dataset and then do the following compare
+
+* Cold feature packing using batched packing
 
 ```shell
 python /home/ubuntu/OfflineSampling/examples/feat_map_reduce_packing.py
 ```
 
-* Online training
+* Cold feature packing using individual packing
+
+```
+python /home/ubuntu/OfflineSampling/examples/feat_packing.py
+```
+
+* Online training to demonstrate the batched packing does not bring overhead to online training
 
 ```shell
 python /home/ubuntu/OfflineSampling/examples/train_single_mapreduce.py
 ```
+
+### Test blowup
+
+```
+bash run_blowup.sh
+```
+
+### Marius Baseline
+
+install following the marius github
+
+take one dataset for example
+
+#### preprocessing dataset and profile time
+
+```
+python marius_preprocess_mag.py
+```
+
+#### online training of marius
+
+```
+marius_train datasets/my_mag240m_8192/marius_gs_acc.yaml
+```
+
+you can change the config in the .yaml file
