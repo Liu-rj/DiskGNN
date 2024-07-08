@@ -1,4 +1,4 @@
-# OfflineSampling for Out-of-core GNN Training
+# DiskGNN for Out-of-core GNN Training
 
 ## Installation
 
@@ -42,41 +42,42 @@ cd ../python; python setup.py install
 
 ## Usage
 
-* Prepare dataset
+The following example runs DiskGNN on the GraphSAGE model and Ogbn-papers100M dataset.
 
-```shell
-python prepare_dataset.py --dataset=ogbn-products
+- cd into the example directory (from the root directory of this repo):
+
+```
+cd example
 ```
 
-* Offline sampling
+* Prepare dataset:
 
 ```shell
-sudo env PATH=$PATH python sampling.py --dataset=ogbn-products --fanout="10,10,10"
+python prepare_dataset.py --dataset ogbn-papers100M
 ```
 
-* Cold feature packing
+* Offline sampling:
 
 ```shell
-sudo env PATH=$PATH python feat_packing.py --dataset=ogbn-products --feat-cache-size=2e8
+sudo env PATH=$PATH python sampling.py --dataset ogbn-papers100M --fanout "10,15,20" --store-path /nvme2n1/offgs_dataset --ratio 1.0
 ```
 
-* Online training
+* Cold feature packing with smart search method:
 
 ```shell
-sudo env PATH=$PATH python train_single_thread.py --dataset=ogbn-products --feat-cache-size=2e8
+sudo env PATH=$PATH python feat_packing.py --dataset ogbn-papers100M --fanout "10,15,20" --feat-cache-size 5e9 --store-path /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1
 ```
 
-### for accelerate preprocessing
-previous steps are the same
-
-* Cold feature packing
+* Online training efficiency evaluation:
 
 ```shell
-python /home/ubuntu/OfflineSampling/examples/feat_map_reduce_packing.py
+sudo env PATH=$PATH python train_multi_thread.py --dataset ogbn-papers100M --fanout "10,15,20" --hidden 256 --dropout 0.2 --model SAGE --gpu-cache-size 2e9 --cpu-cache-size 3e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1
 ```
 
-* Online training
+- Online training accuracy evaluation:
 
 ```shell
-python /home/ubuntu/OfflineSampling/examples/train_single_mapreduce.py
+sudo env PATH=$PATH python train_multi_thread.py --dataset ogbn-papers100M --fanout "10,15,20" --hidden 256 --dropout 0.2 --model SAGE --gpu-cache-size 2e9 --cpu-cache-size 3e9 --dir /nvme2n1/offgs_dataset --ratio 1.0 --blowup -1 --device 1 --num-epoch 50 --debug
 ```
+
+**Full experiment instructions are in examples/run.sh.**
