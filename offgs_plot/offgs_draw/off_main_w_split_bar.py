@@ -14,7 +14,8 @@ SAVE_PTH = "../figures"
 font_size = 16
 
 
-file_path = "../Graph_NN_Benchmarks.csv"
+# file_path = "../Graph_NN_Benchmarks.csv"
+file_path = "/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/Graph_NN_Benchmarks.csv"
 
 with open(file_path, mode="r", newline="") as file:
     reader = csv.reader(file)
@@ -24,6 +25,7 @@ with open(file_path, mode="r", newline="") as file:
 for row in data[1:]:
     row[4] = str(round(float(row[4]) + float(row[5]), 2))
     row[4], row[5], row[6], row[7] = row[7], row[5], row[4], row[8]
+    row.insert(5,row[-1])
     ##remove row[8]
     row = row[:-2]
 
@@ -40,7 +42,7 @@ with open(new_file_path, mode="w", newline="") as file:
 
 for row in data[1:]:
     normalize = float(row[2])
-    for j in range(2, 8):
+    for j in range(2, 9):
         row[j] = str(round(float(row[j]) / normalize, 2))
 ##
 print("after normalization")
@@ -66,22 +68,25 @@ for k, model in enumerate(models):
     fig.set_size_inches(20, 3)
     plt.subplots_adjust(wspace=0, hspace=0)
 
-    total_width, n = 6, 6
+    total_width, n = 7, 7
     group = 1
     width = total_width * 0.9 / n
     x = np.arange(group) * n
     exit_idx_x = x + (total_width - width) / n
     edgecolors = ["dimgrey", "lightseagreen", "tomato", "slategray", "silver"]
-    hatches = ["", "\\\\", "//", "x", "--", "..", "xx", "oo", ".."]
+    hatches = ["", "\\\\", "//",'||', "x", "--", "..", "xx", "oo", ".."]
+    
+    
     labels = [
         "DiskGNN",
         "DiskGNN+Preprocess",
         "MariusGNN",
+        "MariusGNN+Preprocess",
         "Ginex",
         "Ginex+Sample",
         "DGL-OnDisk",
     ]
-    colorlist = ["white", "white", "white", "white", "white", "k"]
+    colorlist = ["white", "white", "white", "white","white", "white", "k"]
     if k == 0:
         x_labels = "GraphSAGE"
     else:
@@ -105,7 +110,7 @@ for k, model in enumerate(models):
 
             num = float(data[i * 2 + k][j + 2])
             plot_label = [num]
-            if j == 5 and i == 3:
+            if j == 6 and i == 3:
                 plot_label = ["N/A"]
                 num = 0
             container = axes[i].bar(
@@ -120,7 +125,7 @@ for k, model in enumerate(models):
                 label=labels[j],
                 zorder=10,
             )
-            if j == 5 and i == 3:
+            if j == 6 and i == 3:
                 plot_label = ["N/A"]
             axes[i].bar_label(
                 container,
@@ -132,8 +137,8 @@ for k, model in enumerate(models):
 
     if k == 0:
         axes[0].legend(
-            bbox_to_anchor=(3.6, 1.08),
-            ncol=6,
+            bbox_to_anchor=(3.9, 1.08),
+            ncol=7,
             loc="lower right",
             # fontsize=font_size,
             # markerscale=3,
@@ -144,8 +149,8 @@ for k, model in enumerate(models):
             shadow=False,
             # fancybox=False,
             handlelength=2,
-            handletextpad=1,
-            columnspacing=0.8,
+            handletextpad=0.5,
+            columnspacing=0.5,
             prop={"weight": "bold", "size": font_size},
         ).set_zorder(100)
 

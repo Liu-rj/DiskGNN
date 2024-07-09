@@ -70,9 +70,9 @@ exit_idx_x = x + (total_width - width) / n
 edgecolors = ["tomato", "slategray", "skyblue", "silver", "silver"]
 hatches = ["//", "\\\\"]
 labels = [
-    "Primitive Preprocessing",
+    "Individual Packing",
     "Primitive Read",
-    "Optimized Preprocessing",
+    "Batched Packing",
     "Optimized Read",
 ]
 
@@ -151,7 +151,7 @@ axes.set_xticklabels(x_labels, fontsize=font_size)
 
 
 axes.legend(
-    bbox_to_anchor=(1.01, 0.99),
+    bbox_to_anchor=(0.91, 0.99),
     ncol=3,
     loc="lower right",
     # fontsize=10,
