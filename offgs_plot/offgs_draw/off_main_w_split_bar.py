@@ -76,6 +76,7 @@ for k, model in enumerate(models):
     edgecolors = ["dimgrey", "lightseagreen", "tomato", "slategray", "silver"]
     hatches = ["", "\\\\", "//",'||', "x", "--", "..", "xx", "oo", ".."]
     
+    
     labels = [
         "DiskGNN",
         "DiskGNN+Preprocess",
