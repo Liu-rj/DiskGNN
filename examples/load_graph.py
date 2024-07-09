@@ -14,16 +14,6 @@ def load_ogb(name, root):
     g: dgl.DGLGraph = g.long()
     ## TODO add products dataset change split idx to 1% train node
     feat = g.ndata["feat"]
-    if name == "ogbn-products":
-        ## use 0.01 numnodes as train idx
-        num_trainnode=int(0.01*g.num_nodes())
-        ## use 0.01 as valid
-        num_validnode=int(0.01*g.num_nodes())
-        num_testnode=g.num_nodes()-num_trainnode-num_validnode
-        train_nid = torch.arange(num_trainnode)
-        valid_nid = torch.arange(num_trainnode,num_trainnode+num_validnode)
-        test_nid = torch.arange(num_trainnode+num_validnode,g.num_nodes())
-        splitted_idx = {"train": train_nid, "test": test_nid, "valid": valid_nid}
     labels = labels[:, 0]
     if name == "ogbn-papers100M":
         labels[labels.isnan()] = 404.0

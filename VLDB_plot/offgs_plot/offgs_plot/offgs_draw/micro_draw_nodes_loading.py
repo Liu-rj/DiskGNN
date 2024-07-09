@@ -136,6 +136,10 @@ axes[0].legend(
 
 axes[0].set_ylabel("Read I/O (\\textit{GB})", fontsize=font_size)
 # axes[0].set_yticklabels(yticks, fontsize=font_size)
+axes[0].set_yticklabels(
+    ["10$^\\mathrm{1}$", "10\\^{2}", "10\\^{3}", "10\\^{4}", "10\\^{5}"],
+    fontsize=font_size,
+)
 # axes[1].set_yticklabels([])
 file_name = f"{SAVE_PTH}/read_io.pdf"
 plt.savefig(file_name, bbox_inches="tight", dpi=300)
