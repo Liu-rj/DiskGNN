@@ -181,34 +181,35 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
   // all_data = all_data.pin_memory().view({num_indices, feature_dim});
   all_data = all_data.clone();
 
-
   free(read_buffer);
 
   return all_data;
 }
 
 torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
-                                     int64_t previously_read_indices, int64_t num_indices,
-                                     int64_t feature_dim) {
+                                     int64_t previously_read_indices,
+                                     int64_t num_indices, int64_t feature_dim) {
   size_t alignment = ALIGNMENT;
   size_t start_offset = previously_read_indices * feature_dim * sizeof(float);
 
-
   size_t misalignment = start_offset % alignment;
-  size_t aligned_start_offset = misalignment == 0 ? start_offset : start_offset - misalignment;
-  size_t extra_bytes_before = start_offset - aligned_start_offset; 
+  size_t aligned_start_offset =
+      misalignment == 0 ? start_offset : start_offset - misalignment;
+  size_t extra_bytes_before = start_offset - aligned_start_offset;
 
   auto total_size = num_indices * feature_dim * sizeof(float);
   size_t total_read_size = total_size + extra_bytes_before;
   size_t reminder = total_read_size % alignment;
-  size_t aligned_size = reminder == 0 ? total_read_size : total_read_size + alignment - reminder; 
+  size_t aligned_size =
+      reminder == 0 ? total_read_size : total_read_size + alignment - reminder;
 
   float* read_buffer = (float*)aligned_alloc(alignment, aligned_size);
   size_t residual = aligned_size - total_read_size;
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
   if (fd == -1) {
-    LOG(FATAL) << "ERROR: Unable to open file " << file_path << ": " << strerror(errno);
+    LOG(FATAL) << "ERROR: Unable to open file " << file_path << ": "
+               << strerror(errno);
   }
 
   if (lseek(fd, aligned_start_offset, SEEK_SET) == -1) {
@@ -228,9 +229,12 @@ torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
 
   close(fd);
 
-  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
-  auto all_data = torch::from_blob(read_buffer + extra_bytes_before / sizeof(float), total_size / sizeof(float), options)
-      .view({num_indices, feature_dim});
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto all_data =
+      torch::from_blob(read_buffer + extra_bytes_before / sizeof(float),
+                       total_size / sizeof(float), options)
+          .view({num_indices, feature_dim});
   // clone all data to avoid memory leak
   all_data = all_data.clone();
 
@@ -389,8 +393,7 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
     for (int j = i; j < r; j++) {
       sqe = io_uring_get_sqe(&ring);
       if (!sqe) {
-        LOG(FATAL) << "Could not get SQE."
-                   << " i: " << i << " j: " << j;
+        LOG(FATAL) << "Could not get SQE." << " i: " << i << " j: " << j;
       }
       io_uring_prep_read(sqe, fd, read_buffer + (j * ALIGNMENT) / sizeof(float),
                          ALIGNMENT, page_ids_ptr[j] * ALIGNMENT);

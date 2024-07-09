@@ -1,0 +1,5 @@
+dataset,metrics,Naive,Naive+P,Naive+P+G,Naive+P+G+C,Naive+P+G+C+D
+friendster,Time,2838.9,253.3,143.7,96.67,108.92
+friendster,Disk Space,1x,16.667x,9.667x,5.397x,5x
+igb-full,Time,37718.6,3229,1811.3,960.73,3197.72
+igb-full,Disk Space,1x,48.062x,27.907x,10.487x,5x

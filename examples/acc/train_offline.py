@@ -109,6 +109,46 @@ def feat_transfer(
         out_queue.put(x)
 
 
+def evaluate(
+    model, val_dataloader, test_dataloader, features, labels, label_offset, device
+):
+    # --- valid ---#
+    model.eval()
+    valid_correct, valid_tot, val_acc = 0, 0, 0
+    for it, (input_nodes, output_nodes, blocks) in enumerate(
+        tqdm(val_dataloader, ncols=100)
+    ):
+        blocks = [block.to(device) for block in blocks]
+        x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+        # x = features[input_nodes.cpu()].to(device)
+        y = gather_pinned_tensor_rows(labels, output_nodes - label_offset).long()
+        pred = model(blocks, x)
+        correct = (pred.argmax(dim=1) == y).sum().item()
+        total = y.shape[0]
+        valid_correct += correct
+        valid_tot += total
+    val_acc = valid_correct / valid_tot
+
+    # --- test --- #
+    model.eval()
+    test_correct, test_tot, test_acc = 0, 0, 0
+    if args.dataset != "mag240m":
+        for it, (input_nodes, output_nodes, blocks) in enumerate(
+            tqdm(test_dataloader, ncols=100)
+        ):
+            blocks = [block.to(device) for block in blocks]
+            x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+            # x = features[input_nodes.cpu()].to(device)
+            y = gather_pinned_tensor_rows(labels, output_nodes - label_offset).long()
+            pred = model(blocks, x)
+            correct = (pred.argmax(dim=1) == y).sum().item()
+            total = y.shape[0]
+            test_correct += correct
+            test_tot += total
+        test_acc = test_correct / test_tot
+    return val_acc, test_acc
+
+
 def train(
     args,
     dataset: OffgsDataset,
@@ -167,6 +207,7 @@ def train(
             use_uva=True,
         )
 
+        test_dataloader = None
         if args.dataset != "mag240m":
             test_dataloader = DataLoader(
                 graph,
@@ -180,6 +221,36 @@ def train(
             )
 
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
+    val_acc, test_acc = evaluate(
+        model,
+        val_dataloader,
+        test_dataloader,
+        features,
+        labels,
+        label_offset,
+        device,
+    )
+
+    print(
+        f"Epoch: 0\t"
+        f"Valid acc: {val_acc * 100:.2f}%\t"
+        f"Test acc: {test_acc * 100:.2f}%\t"
+    )
+
+    with open(acc_logfile, "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            0,
+            round(-1, 3),
+            round(-1, 2),
+            round(val_acc * 100, 2),
+            round(test_acc * 100, 2),
+            round(best_val_acc * 100, 2),
+            round(best_test_acc * 100, 2),
+            best_epoch,
+        ]
+        writer.writerow(log_info)
+
     epoch_info_recorder = [[] for i in range(6)]
     for epoch in range(args.num_epoch):
         with open("/proc/sys/vm/drop_caches", "w") as stream:
@@ -260,7 +331,7 @@ def train(
 
         model.train()
         train_correct, train_tot, train_acc = 0, 0, 0
-        for i in tqdm(batch_id, ncols=100):
+        for it, i in tqdm(enumerate(batch_id), ncols=100):
             # tic = time.time()
             blocks, y = graph_queue.get()
             blocks = [block.to(device, non_blocking=True) for block in blocks]
@@ -291,6 +362,46 @@ def train(
             # default_stream.synchronize()
             # info_recorder[2] += time.time() - tic  # train
 
+            if epoch == 0 and it in [
+                len(batch_id) // 500,
+                len(batch_id) // 100,
+                len(batch_id) // 10,
+                len(batch_id) // 5,
+                len(batch_id) // 2,
+            ]:
+                train_acc = train_correct / train_tot
+                val_acc, test_acc = evaluate(
+                    model,
+                    val_dataloader,
+                    test_dataloader,
+                    features,
+                    labels,
+                    label_offset,
+                    device,
+                )
+
+                print(
+                    f"Epoch: {(it + 1) / len(batch_id)}\t"
+                    f"Loss: {tot_loss:.10f}\t"
+                    f"Valid acc: {val_acc * 100:.2f}%\t"
+                    f"Test acc: {test_acc * 100:.2f}%\t"
+                )
+                model.train()
+
+                with open(acc_logfile, "a") as f:
+                    writer = csv.writer(f, lineterminator="\n")
+                    log_info = [
+                        round((it + 1) / len(batch_id), 3),
+                        round(tot_loss, 3),
+                        round(train_acc * 100, 2),
+                        round(val_acc * 100, 2),
+                        round(test_acc * 100, 2),
+                        round(best_val_acc * 100, 2),
+                        round(best_test_acc * 100, 2),
+                        best_epoch,
+                    ]
+                    writer.writerow(log_info)
+
         train_acc = train_correct / train_tot
         for t in threads:
             t.join()
@@ -298,44 +409,15 @@ def train(
         epoch_time = time.time() - start
 
         if args.debug and (epoch % args.log_every == 0 or epoch == args.num_epoch - 1):
-            # --- valid ---#
-            model.eval()
-            valid_correct, valid_tot, val_acc = 0, 0, 0
-            for it, (input_nodes, output_nodes, blocks) in enumerate(
-                tqdm(val_dataloader, ncols=100)
-            ):
-                blocks = [block.to(device) for block in blocks]
-                x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                # x = features[input_nodes.cpu()].to(device)
-                y = gather_pinned_tensor_rows(
-                    labels, output_nodes - label_offset
-                ).long()
-                pred = model(blocks, x)
-                correct = (pred.argmax(dim=1) == y).sum().item()
-                total = y.shape[0]
-                valid_correct += correct
-                valid_tot += total
-            val_acc = valid_correct / valid_tot
-
-            # --- test --- #
-            model.eval()
-            test_correct, test_tot, test_acc = 0, 0, 0
-            if args.dataset != "mag240m":
-                for it, (input_nodes, output_nodes, blocks) in enumerate(
-                    tqdm(test_dataloader, ncols=100)
-                ):
-                    blocks = [block.to(device) for block in blocks]
-                    x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                    # x = features[input_nodes.cpu()].to(device)
-                    y = gather_pinned_tensor_rows(
-                        labels, output_nodes - label_offset
-                    ).long()
-                    pred = model(blocks, x)
-                    correct = (pred.argmax(dim=1) == y).sum().item()
-                    total = y.shape[0]
-                    test_correct += correct
-                    test_tot += total
-                test_acc = test_correct / test_tot
+            val_acc, test_acc = evaluate(
+                model,
+                val_dataloader,
+                test_dataloader,
+                features,
+                labels,
+                label_offset,
+                device,
+            )
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_test_acc = test_acc

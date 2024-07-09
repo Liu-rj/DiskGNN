@@ -207,7 +207,31 @@ import os
 #     duration += time.time() - tic
 # print(duration / 3)
 
-graph_path = "/nvme1n1/offgs_dataset/ogbn-papers100M-offgs/graph.pth"
-graph = torch.load(graph_path)
-graph = dgl.add_reverse_edges(graph)
-torch.save(graph, graph_path)
+# graph_path = "/nvme1n1/offgs_dataset/ogbn-papers100M-offgs/graph.pth"
+# graph = torch.load(graph_path)
+# graph = dgl.add_reverse_edges(graph)
+# torch.save(graph, graph_path)
+
+# size_10mb = 10 * 1024 * 1024
+# size_1gb = 1024 * 1024 * 1024
+
+# temp = torch.rand(size_1gb, dtype=torch.float32)
+# tic = time.time()
+# temp = temp.pin_memory()
+# print(time.time() - tic)
+
+# duration = 0
+# for i in range(100):
+#     temp = torch.rand(size_10mb, dtype=torch.float32)
+#     tic = time.time()
+#     temp = temp.pin_memory()
+#     duration += time.time() - tic
+# print(duration)
+
+a = torch.rand(1000000000, dtype=torch.float32)
+# idx = torch.randint(0, 1000000000, (1000000000,), dtype=torch.int64)
+tic = time.time()
+b = torch.clone(a)
+# b = a[idx]
+duration = time.time() - tic
+print(a.numel() * 4 / (1024 * 1024 * 1024 * duration), "GB/s")

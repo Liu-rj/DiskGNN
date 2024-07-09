@@ -64,30 +64,6 @@ def train(
     print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
     pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
 
-    if args.debug:
-        val_dataloader = DataLoader(
-            graph,
-            dataset.split_idx["valid"],
-            sampler,
-            batch_size=args.batchsize,
-            shuffle=True,
-            drop_last=False,
-            device=device,
-            use_uva=True,
-        )
-
-        if args.dataset != "mag240m":
-            test_dataloader = DataLoader(
-                graph,
-                dataset.split_idx["test"],
-                sampler,
-                batch_size=args.batchsize,
-                shuffle=True,
-                drop_last=False,
-                device=device,
-                use_uva=True,
-            )
-
     torch.ops.offgs._CAPI_Init_iouring()
 
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
@@ -221,56 +197,6 @@ def train(
             meta_load + feat_create + cold_load + cache_load + feat_pin + feat_free
         )  # feature load
 
-        if args.debug:
-            # --- valid ---#
-            model.eval()
-            valid_correct, valid_tot, val_acc = 0, 0, 0
-            for it, (input_nodes, output_nodes, blocks) in enumerate(
-                tqdm(val_dataloader, ncols=100)
-            ):
-                blocks = [block.to(device) for block in blocks]
-                x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                # x = features[input_nodes.cpu()].to(device)
-                y = gather_pinned_tensor_rows(
-                    labels, output_nodes - label_offset
-                ).long()
-                pred = model(blocks, x)
-                correct = (pred.argmax(dim=1) == y).sum().item()
-                total = y.shape[0]
-                valid_correct += correct
-                valid_tot += total
-            val_acc = valid_correct / valid_tot
-
-            # --- test --- #
-            model.eval()
-            test_correct, test_tot, test_acc = 0, 0, 0
-            if args.dataset != "mag240m":
-                for it, (input_nodes, output_nodes, blocks) in enumerate(
-                    tqdm(test_dataloader, ncols=100)
-                ):
-                    blocks = [block.to(device) for block in blocks]
-                    x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                    # x = features[input_nodes.cpu()].to(device)
-                    y = gather_pinned_tensor_rows(
-                        labels, output_nodes - label_offset
-                    ).long()
-                    pred = model(blocks, x)
-                    correct = (pred.argmax(dim=1) == y).sum().item()
-                    total = y.shape[0]
-                    test_correct += correct
-                    test_tot += total
-                test_acc = test_correct / test_tot
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_test_acc = test_acc
-                best_epoch = epoch
-
-            print(
-                f"Loss: {tot_loss:.10f}\t"
-                f"Valid acc: {val_acc * 100:.2f}%\t"
-                f"Test acc: {test_acc * 100:.2f}%\t"
-            )
-
         print(
             f"Meta Load Time: {meta_load:.3f}\t"
             f"Feat Create Time: {feat_create:.3f}\t"
@@ -291,7 +217,7 @@ def train(
             f"Graph Load Time: {info_recorder[0]:.3f}\t"
             f"Feature Load Time: {info_recorder[1]:.3f}\t"
             f"Feat Assemble Time: {info_recorder[2]:.3f}\t"
-            f"Sample and Graph Transfer Time : {info_recorder[3]:.3f}\t"
+            f"Graph Transfer Time : {info_recorder[3]:.3f}\t"
             f"Feat Transfer Time: {info_recorder[4]:.3f}\t"
             f"Train Time: {info_recorder[5]:.3f}\t"
             f"Sample init time: {info_recorder[6]:.3f}\t"
@@ -333,6 +259,7 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
+            args.blowup,
             f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
@@ -429,7 +356,7 @@ if __name__ == "__main__":
     parser.add_argument("--blowup", type=float, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)
-    parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
+    parser.add_argument("--log", type=str, default="logs/train_single_thread.csv")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--log_every", type=int, default=1)
     args = parser.parse_args()

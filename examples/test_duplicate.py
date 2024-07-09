@@ -18,11 +18,14 @@ parser.add_argument("--dataset", type=str, default="friendster")
 parser.add_argument("--batchsize", type=int, default=1024)
 parser.add_argument("--fanout", type=str, default="10,10,10")
 parser.add_argument("--store-path", default="/nvme1n1/offgs_dataset")
-parser.add_argument("--feat-cache-size", type=int, default=10000000000)
-parser.add_argument("--log", type=str, default="logs/pack_decompose.csv")
+parser.add_argument("--feat-cache-size", type=float, default=1e10)
+parser.add_argument("--disk-cache-num", type=float, default=1e6)
+parser.add_argument("--segment-size", type=int, default=100)
 parser.add_argument("--ratio", type=float, default=1.0)
 args = parser.parse_args()
 print(args)
+args.feat_cache_size = int(args.feat_cache_size)
+args.disk_cache_num = int(args.disk_cache_num)
 
 # --- load data --- #
 dataset_path = f"{args.store_path}/{args.dataset}-offgs"
@@ -56,14 +59,10 @@ train_idx = (
 num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
 
 tic = time.time()
-table_size = 4 * dataset.num_nodes
 num_entries = min(
-    (args.feat_cache_size - table_size) // (4 * features.shape[1]),
+    args.feat_cache_size // (4 * features.shape[1]),
     dataset.num_nodes,
 )
-# Maximum 400GB cache size for int32 (aligned with Ginex)
-if num_entries > torch.iinfo(torch.int32).max:
-    raise ValueError
 cache_indices = sorted_idx[:num_entries]
 key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
 cache_init_time = time.time() - tic
@@ -72,31 +71,66 @@ print(
     f"Ratio: {num_entries / dataset.num_nodes}",
     f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}",
 )
+assert args.disk_cache_num + num_entries < dataset.num_nodes
+num_segments = (num_batches + args.segment_size - 1) // args.segment_size
+print(f"Num Segments: {num_segments}, Segment Size: {args.segment_size}")
 
 sampled_batch = torch.randperm(num_batches)[:2].tolist()
 
 overlap_rate = []
 for bid in sampled_batch:
+    segid = bid // args.segment_size
+    startid = segid * args.segment_size
+    endid = min((segid + 1) * args.segment_size, num_batches)
+
+    popularity = torch.zeros(dataset.num_nodes, dtype=torch.int32, device=device)
+    for i in trange(startid, endid, ncols=100):
+        input_nodes = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
+        cold_nodes = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)[0]
+        popularity[cold_nodes] += 1
+
+    seg_sorted_idx = torch.argsort(popularity, descending=True)
+    disk_cache = seg_sorted_idx[: args.disk_cache_num]
+    disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache)
+    print(
+        f"Disk Cache Entries: {args.disk_cache_num} / {dataset.num_nodes}",
+        f"Ratio: {args.disk_cache_num / dataset.num_nodes}",
+        f"Access Cache Ratio: {popularity[disk_cache].sum().item() / popularity.sum().item()}",
+    )
+
     overlap_rate.append([])
     input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{bid}.pt").to(device)
-    bid_cold, _, _, _ = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+    bid_cold = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)[0]
+    bid_disk = torch.ops.offgs._CAPI_QueryHashMap(bid_cold, disk_key, disk_value)[0]
 
-    for i in trange(num_batches, ncols=100):
-        if i == bid:
-            continue
-        input_nodes: torch.Tensor = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
+    for segid in trange(num_segments, ncols=100):
+        startid = segid * args.segment_size
+        endid = min((segid + 1) * args.segment_size, num_batches)
 
-        (
-            cold_nodes,
-            rev_cold_idx,
-            hot_nodes,
-            rev_hot_idx,
-        ) = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)
+        popularity = torch.zeros(dataset.num_nodes, dtype=torch.int32, device=device)
+        for i in range(startid, endid):
+            input_nodes = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
+            cold_nodes = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)[0]
+            popularity[cold_nodes] += 1
 
-        overlap_rate[-1].append(
-            np.intersect1d(bid_cold.cpu(), cold_nodes.cpu()).shape[0]
-            / bid_cold.shape[0]
-        )
+        seg_sorted_idx = torch.argsort(popularity, descending=True)
+        disk_cache = seg_sorted_idx[: args.disk_cache_num]
+        disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache)
+
+        src, dst = [], []
+        for i in range(startid, endid):
+            if i == bid:
+                continue
+            input_nodes = torch.load(f"{output_dir}/in-nid-{i}.pt").to(device)
+            cold_nodes = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)[0]
+            disk_cold = torch.ops.offgs._CAPI_QueryHashMap(
+                cold_nodes, disk_key, disk_value
+            )[0]
+
+            overlap_rate[-1].append(
+                np.intersect1d(bid_disk.cpu(), disk_cold.cpu()).shape[0]
+                / bid_disk.shape[0]
+            )
 
 
 for i, bid in enumerate(sampled_batch):
@@ -110,5 +144,5 @@ plt.ylabel("Intersection / Size of Batch")
 plt.title(f"{args.dataset} Intersection")
 plt.grid()
 plt.legend()
-plt.savefig(f"figs/{args.dataset}-{args.feat_cache_size}-intersection.png")
+plt.savefig(f"figs/{args.dataset}-{args.feat_cache_size:g}-intersection.png")
 plt.close()

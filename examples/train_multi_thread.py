@@ -260,13 +260,13 @@ def train(
         model.train()
         train_correct, train_tot, train_acc = 0, 0, 0
         for i in tqdm(batch_id, ncols=100):
-            # tic = time.time()
+            tic = time.time()
             blocks, y = graph_queue.get()
             blocks = [block.to(device, non_blocking=True) for block in blocks]
             y = y.to(device, non_blocking=True)
-            # info_recorder[0] += time.time() - tic  # graph load
 
             x = feature_queue.get()
+            info_recorder[0] += time.time() - tic  # data load
             info_recorder[4] += x.numel()
 
             if args.debug:
@@ -387,6 +387,8 @@ def train(
             f"{args.gpu_cache_size:g}",
             round(args.cpu_cache_ratio, 2),
             round(args.gpu_cache_ratio, 2),
+            args.ratio,
+            args.blowup,
             f"{args.disk_cache_num:g}",
             args.segment_size,
             args.model,
