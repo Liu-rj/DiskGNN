@@ -63,6 +63,8 @@ for dataset in datasets:
                 label = "MariusGNN"
                 marker = "x"
                 color = micro_blue
+                epoch = epoch[1:]
+                accuracy = accuracy[1:]
             else:
                 epoch[6:] = epoch[6:] + 1
                 acc_col = 3 if dataset == "mag240m" else 4
@@ -96,7 +98,10 @@ for dataset in datasets:
         ax.set_xticklabels(xticks, fontsize=font_size)
         ax.set_yticks(yticks, yticks, fontsize=font_size)
         ax.set_yticklabels(yticks, fontsize=font_size)
-        ax.set_ylim(0.1, 0.7)
+        if dataset == "ogbn-papers100M":
+            ax.set_ylim(0.05, 0.7)
+        else:
+            ax.set_ylim(0.1, 0.7)
         ax.grid(axis="y", linestyle="--")
         ax.legend(
             loc="best",
