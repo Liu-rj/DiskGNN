@@ -17,8 +17,10 @@ cache_sizes = {
     "Friendster": [3, 9, 15],
     "IGB-HOM": [15, 45, 75],
 }
+## 780, 780*3, 780*5 FS
+##IG 900, 900*3, 900*5
 
-file_path = "../offgs_data/read_io.csv"
+file_path = "../offgs_data/read_io_new.csv"
 # file_path="/home/ubuntu/OfflineSampling/VLDB_plot/offgs_plot/offgs_plot/offgs_data/read_io.csv"
 with open(file_path, mode="r", newline="") as file:
     reader = csv.reader(file)
