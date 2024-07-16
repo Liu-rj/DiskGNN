@@ -1,0 +1,7 @@
+Dataset,Cache Mem (GB),DiskGNN,Ginex,MariusGNN
+friendster,10%,168.84,997.38,2.98022
+friendster,30%,50.50,290.22,8.94067
+friendster,50%,17.56,108.32,14.9011
+igb-full,10%,1346.89,7294.17,14.392
+igb-full,30%,19.13,130.74,
+igb-full,50%,0.00,0.00,78.39202881
