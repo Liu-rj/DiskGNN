@@ -97,7 +97,7 @@ ax.set_yticks(yticks)
 ax.set_yticklabels(yticks, fontsize=font_size)
 ax.set_ylim(0, val_limit)
 ax.set_ylabel("Disk Size Blow up", fontsize=font_size)
-ax.set_xlabel("Cache Sizes", fontsize=font_size)
+ax.set_xlabel("CPU Memory Cache Size", fontsize=font_size)
 ax.legend(
     fontsize=font_size,
     edgecolor="black",

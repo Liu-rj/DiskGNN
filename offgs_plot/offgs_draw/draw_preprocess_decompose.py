@@ -109,7 +109,7 @@ for j in range(4):
 
     label_data = [data[j] for data in all_normalized_statistics]
     container = axes.bar(
-        exit_idx_x + ( (int(j / 2))) * width,
+        exit_idx_x + ((int(j / 2))) * width,
         [data[j] for data in all_normalized_statistics],
         width=width * 0.8,
         color=color,
@@ -120,7 +120,7 @@ for j in range(4):
         alpha=0.7,
         zorder=10,
     )
-    loc = loc + list(exit_idx_x + ( (int(j / 2))) * width)
+    loc = loc + list(exit_idx_x + ((int(j / 2))) * width)
     read_data = read_data + [data[j + 1] for data in all_normalized_statistics]
     axes.bar_label(
         container, label_data, fontsize=font_size, zorder=200, fontweight="bold"
@@ -136,7 +136,7 @@ container = axes.bar(
     edgecolor="black",
     hatch="///",
     # linewidth=0.3,
-    label="Read Time",
+    label="Feature Loading",
     alpha=0.4,
     zorder=10,
 )
@@ -151,7 +151,7 @@ axes.set_xticklabels(x_labels, fontsize=font_size)
 
 
 axes.legend(
-    bbox_to_anchor=(0.91, 0.99),
+    bbox_to_anchor=(0.95, 0.99),
     ncol=3,
     loc="lower right",
     # fontsize=10,

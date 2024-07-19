@@ -48,7 +48,7 @@ print(all_normalized_runtime)
 print(all_speedup)
 print(all_disk_blowup)
 
-total_width, n = 5, 5
+total_width, n = 5, 4
 group = 1
 width = total_width * 0.9 / n
 x = np.arange(group) * n
@@ -91,7 +91,7 @@ for it, ydata in enumerate([all_normalized_runtime, all_speedup]):
             container = axes[i].bar(
                 exit_idx_x + j * width,
                 ydata[i][j],
-                width=width * 0.8,
+                width=width * 0.65,
                 color="white",
                 edgecolor="k",
                 hatch=hatches[j],
@@ -107,41 +107,36 @@ for it, ydata in enumerate([all_normalized_runtime, all_speedup]):
                 fontweight="bold",
             )
 
-        ax2 = axes[i].twinx()
-        # plot_label = all_disk_blowup[i]
-        x = [exit_idx_x + j * width for j in range(n)]
-        container = ax2.plot(
-            x,
-            all_disk_blowup[i],
-            label=f"Disk Blowup",
-            linestyle="--",
-            color="black",
-            marker="o",
-            markersize=10,
-            markerfacecolor="none",
-            linewidth=1,
-        )
-        ax2.set_yticks(tx_yticks)
-        ax2.set_yticklabels([])
-        # ax2.set_ylim(0, val_limit)
-        ax2.tick_params(axis="y", labelsize=10)  # 设置 y 轴刻度标签的字体大小
-        # axes[i].bar_label(
-        #     container, plot_label, fontsize=font_size - 2, zorder=200, fontweight="bold"
+        # ax2 = axes[i].twinx()
+        # x = [exit_idx_x + j * width for j in range(n)]
+        # container = ax2.plot(
+        #     x,
+        #     all_disk_blowup[i],
+        #     label=f"Disk Blowup",
+        #     linestyle="--",
+        #     color="black",
+        #     marker="o",
+        #     markersize=10,
+        #     markerfacecolor="none",
+        #     linewidth=1,
         # )
+        # ax2.set_yticks(tx_yticks)
+        # ax2.set_yticklabels([])
+        # ax2.tick_params(axis="y", labelsize=10)  # 设置 y 轴刻度标签的字体大小
 
-    axes[0].plot(
-        [],
-        [],
-        linestyle="--",
-        color="black",
-        marker="o",
-        markersize=5,
-        markerfacecolor="none",
-        linewidth=1,
-        label="Disk Blowup",
-    )
+    # axes[0].plot(
+    #     [],
+    #     [],
+    #     linestyle="--",
+    #     color="black",
+    #     marker="o",
+    #     markersize=5,
+    #     markerfacecolor="none",
+    #     linewidth=1,
+    #     label="Disk Blowup",
+    # )
     axes[0].legend(
-        bbox_to_anchor=(2.07, 1.02),
+        bbox_to_anchor=(1.7, 1.02),
         ncol=6,
         loc="lower right",
         # fontsize=font_size,
@@ -152,7 +147,7 @@ for it, ydata in enumerate([all_normalized_runtime, all_speedup]):
         framealpha=1,
         shadow=False,
         # fancybox=False,
-        handlelength=1.3,
+        handlelength=1.8,
         handletextpad=0.5,
         columnspacing=0.5,
         prop={"weight": "bold", "size": font_size - 2},
@@ -162,12 +157,12 @@ for it, ydata in enumerate([all_normalized_runtime, all_speedup]):
     axes[0].set_ylabel(title_label, fontsize=font_size)
     axes[0].set_yticklabels(yticks, fontsize=font_size)
     axes[1].set_yticklabels([])
-    ax0_tx, ax1_tx = axes[0].twinx(), axes[1].twinx()
-    ax1_tx.set_ylabel("Disk Space Blowup", fontsize=font_size)
-    ax1_tx.set_yticks(tx_yticks)
-    ax1_tx.set_yticklabels(tx_yticks, fontsize=font_size)
-    ax0_tx.set_yticks(tx_yticks)
-    ax0_tx.set_yticklabels([])
+    # ax0_tx, ax1_tx = axes[0].twinx(), axes[1].twinx()
+    # ax1_tx.set_ylabel("Disk Space Blowup", fontsize=font_size)
+    # ax1_tx.set_yticks(tx_yticks)
+    # ax1_tx.set_yticklabels(tx_yticks, fontsize=font_size)
+    # ax0_tx.set_yticks(tx_yticks)
+    # ax0_tx.set_yticklabels([])
     file_label = "runtime" if it == 0 else "speedup"
     file_name = f"{SAVE_PTH}/breakdown_method2_{file_label}.pdf"
     plt_save_and_final(file_name)
