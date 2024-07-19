@@ -42,7 +42,7 @@ def run(args, dataset, label_offset):
 
     print("Saving labels...")
     labels = labels.type(torch.float32)
-    np.save(labels_path, labels)
+    torch.save(labels, labels_path)
     print("Done!")
 
     print("Making conf file...")
