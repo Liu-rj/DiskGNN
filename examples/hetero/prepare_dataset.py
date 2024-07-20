@@ -101,9 +101,9 @@ def run(args, dataset, label_offset):
     # torch.save(g, graph_path)
     # print("Done!")
 
-    print("Saving features...")
-    np.save(features_path, features.numpy())
-    print("Done!")
+    # print("Saving features...")
+    # np.save(features_path, features.numpy())
+    # print("Done!")
 
     print("Saving labels...")
     torch.save(labels, labels_path)
@@ -115,7 +115,7 @@ def run(args, dataset, label_offset):
     mmap_config["num_nodes"] = g.num_nodes
     mmap_config["features_shape"] = tuple(features.shape)
     mmap_config["features_dtype"] = str(features.dtype)
-    mmap_config["feat_itemsize"] = features.itemsize
+    mmap_config["feat_itemsize"] = features.element_size()
     mmap_config["labels_shape"] = tuple(labels[category].shape)
     mmap_config["labels_dtype"] = str(labels[category].dtype)
     mmap_config["num_classes"] = int(n_classes)
