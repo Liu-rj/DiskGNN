@@ -37,7 +37,7 @@ def load_dataset(dataset_name):
                 labels[type] = torch.full(
                     (graph.num_nodes[type],), -1, dtype=torch.int64
                 )
-            labels[type][nid] = label
+            labels[type][nid] = label.long()
 
     # note: not all node types have features
     feature_dim = features.size("node", "paper", "feat")[0]
@@ -82,7 +82,6 @@ def run(args, dataset, label_offset):
     print(g)
     print(labels)
     print(splitted_idx)
-    print(f"features nan value: {np.isnan(features).sum()}")
     print(f"features dtype: {features.dtype}")
     print(f"features shape: {features.shape}")
     print(
@@ -103,15 +102,10 @@ def run(args, dataset, label_offset):
     # print("Done!")
 
     print("Saving features...")
-    features_mmap = np.memmap(
-        features_path, mode="w+", shape=features.shape, dtype=features.dtype
-    )
-    features_mmap[:] = features[:]
-    features_mmap.flush()
+    np.save(features_path, features)
     print("Done!")
 
     print("Saving labels...")
-    # labels = labels.type(torch.float32)
     torch.save(labels, labels_path)
     print("Done!")
 
@@ -119,9 +113,9 @@ def run(args, dataset, label_offset):
     mmap_config = dict()
     mmap_config["total_num_nodes"] = g.total_num_nodes
     mmap_config["num_nodes"] = g.num_nodes
-    mmap_config["features_shape"] = tuple(features_mmap.shape)
-    mmap_config["features_dtype"] = str(features_mmap.dtype)
-    mmap_config["feat_itemsize"] = features_mmap.itemsize
+    mmap_config["features_shape"] = tuple(features.shape)
+    mmap_config["features_dtype"] = str(features.dtype)
+    mmap_config["feat_itemsize"] = features.itemsize
     mmap_config["labels_shape"] = tuple(labels[category].shape)
     mmap_config["labels_dtype"] = str(labels[category].dtype)
     mmap_config["num_classes"] = int(n_classes)
