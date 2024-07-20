@@ -66,7 +66,7 @@ def load_dataset(dataset_name):
 
     return (
         graph,
-        all_node_feats.numpy(),
+        all_node_feats,
         labels,
         num_classes,
         splitted_idx,
@@ -102,7 +102,7 @@ def run(args, dataset, label_offset):
     # print("Done!")
 
     print("Saving features...")
-    np.save(features_path, features)
+    np.save(features_path, features.numpy())
     print("Done!")
 
     print("Saving labels...")

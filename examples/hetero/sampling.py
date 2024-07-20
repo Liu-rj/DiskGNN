@@ -63,6 +63,7 @@ from ogb.nodeproppred import Evaluator
 from tqdm import tqdm
 
 import os
+import csv
 
 
 def load_dataset(dataset_name):
@@ -189,6 +190,7 @@ def main(args):
 
     loader_len = (train_set[:][category][0].numel() + 1024 - 1) // 1024
 
+    start = time.time()
     node_counts = {
         type: torch.zeros(num, dtype=torch.int64, device=device)
         for type, num in g.num_nodes.items()
@@ -233,6 +235,22 @@ def main(args):
     torch.save(g.node_type_offset, f"{output_dir}/node_type_offset.pt")
     torch.save(all_node_counts.cpu(), f"{output_dir}/node_counts.pt")
     torch.save(sorted_idx.cpu(), f"{output_dir}/meta_node_popularity.pt")
+    
+    end = time.time()
+    sample_time = end - start
+    print(f"Sampling time: {sample_time:.2f}s")
+    
+    with open(args.log, "a") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        log_info = [
+            args.dataset,
+            args.fanout,
+            args.batchsize,
+            args.ratio,
+            args.num_workers,
+            round(sample_time, 2),
+        ]
+        writer.writerow(log_info)
 
 
 if __name__ == "__main__":
