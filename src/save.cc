@@ -9,9 +9,11 @@
 #include <thread>
 
 #include "save.h"
+#include "utils.h"
 
 namespace offgs {
-void SaveFeats(const std::string& file_path, const torch::Tensor& feature) {
+template <typename DType>
+void SaveFeatsImpl(const std::string& file_path, const torch::Tensor& feature) {
   int fd =
       open(file_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
   if (fd == -1) {
@@ -19,18 +21,24 @@ void SaveFeats(const std::string& file_path, const torch::Tensor& feature) {
     return;
   }
 
-  auto buf = feature.data_ptr<float>();
-  auto bytes_left = feature.numel() * sizeof(float);
+  auto buf = feature.data_ptr<DType>();
+  auto bytes_left = feature.numel() * sizeof(DType);
 
   while (bytes_left > 0) {
     auto trans = write(fd, buf, bytes_left);
     if (trans == -1) {
       LOG(FATAL) << "ERROR: " << strerror(errno);
     }
-    buf += trans / sizeof(float);
+    buf += trans / sizeof(DType);
     bytes_left -= trans;
   }
 
   close(fd);
+}
+
+void SaveFeats(const std::string& file_path, const torch::Tensor& feature) {
+  auto scalar_type = feature.scalar_type();
+  FLOAT_TYPE_SWITCH(scalar_type, DType,
+                    { SaveFeatsImpl<DType>(file_path, feature); });
 }
 }  // namespace offgs

@@ -11,7 +11,8 @@ torch::Tensor GatherPRead(const std::string& feature_file,
                           const torch::Tensor& idx, int64_t feature_dim);
 
 torch::Tensor GatherPReadDirect(const std::string& feature_file,
-                                const torch::Tensor& idx, int64_t feature_dim);
+                                const torch::Tensor& idx, int64_t feature_dim,
+                                int64_t itemsize);
 
 torch::Tensor GatherIOUringDirect(const std::string& feature_file,
                                   const torch::Tensor& idx,

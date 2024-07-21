@@ -11,6 +11,7 @@
 
 #include "load.h"
 #include "state.h"
+#include "utils.h"
 
 #define ALIGNMENT 4096
 #define RING_LEN 1024
@@ -148,14 +149,15 @@ std::vector<torch::Tensor> LoadFeats_Direct_OMP(const std::string& file_path,
   return res;
 }
 
-torch::Tensor LoadFeats_Direct(const std::string& file_path,
-                               int64_t num_indices, int64_t feature_dim) {
-  auto total_size = num_indices * feature_dim * sizeof(float);
+template <typename DType>
+torch::Tensor LoadFeats_DirectImpl(const std::string& file_path,
+                                   int64_t num_indices, int64_t feature_dim) {
+  auto total_size = num_indices * feature_dim * sizeof(DType);
 
   size_t reminder = total_size % ALIGNMENT;
   size_t aligned_size =
       reminder == 0 ? total_size : total_size - reminder + ALIGNMENT;
-  float* read_buffer = (float*)aligned_alloc(ALIGNMENT, aligned_size);
+  auto read_buffer = (DType*)aligned_alloc(ALIGNMENT, aligned_size);
   size_t residual = aligned_size - total_size;
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
@@ -167,16 +169,17 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
     if (trans == -1) {
       LOG(FATAL) << "ERROR: " << strerror(errno);
     }
-    buf += trans / sizeof(float);
+    buf += trans / sizeof(DType);
     bytes_left -= trans;
   }
 
   close(fd);
 
-  auto options =
-      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto options = torch::TensorOptions()
+                     .dtype(TorchTypeMap<DType>::value)
+                     .device(torch::kCPU);
   auto all_data =
-      torch::from_blob(read_buffer, total_size / sizeof(float), options)
+      torch::from_blob(read_buffer, total_size / sizeof(DType), options)
           .view({num_indices, feature_dim});
   // all_data = all_data.pin_memory().view({num_indices, feature_dim});
   all_data = all_data.clone();
@@ -184,6 +187,14 @@ torch::Tensor LoadFeats_Direct(const std::string& file_path,
   free(read_buffer);
 
   return all_data;
+}
+
+torch::Tensor LoadFeats_Direct(const std::string& file_path,
+                               int64_t num_indices, int64_t feature_dim,
+                               int64_t item_size) {
+  ITEMSIZE_TO_FLOAT(item_size, DType, {
+    return LoadFeats_DirectImpl<DType>(file_path, num_indices, feature_dim);
+  });
 }
 
 torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
@@ -344,17 +355,19 @@ std::vector<double> LoadDiskCache_Direct_OMP(const std::string& file_path,
   return {load_time, copy_time, unique_time, alloc_time, free_time};
 }
 
-void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
-                                      const torch::Tensor& out_data,
-                                      const torch::Tensor& in_idx,
-                                      const torch::Tensor& out_idx,
-                                      int64_t feature_dim) {
+template <typename DType>
+void LoadDiskCache_Direct_OMP_iouringImpl(const std::string& file_path,
+                                          const torch::Tensor& out_data,
+                                          const torch::Tensor& in_idx,
+                                          const torch::Tensor& out_idx,
+                                          int64_t feature_dim) {
   // struct timespec start, end;
+  assert(TorchTypeMap<DType>::value == out_data.scalar_type());
 
   auto* uring_state = IOUringState::Global();
   auto& ring_arr = uring_state->ring_arr;
   auto num_feat_per_page =
-      static_cast<int64_t>((ALIGNMENT / sizeof(float)) / feature_dim);
+      static_cast<int64_t>((ALIGNMENT / sizeof(DType)) / feature_dim);
   assert(in_idx.numel() == out_idx.numel());
 
   // clock_gettime(CLOCK_MONOTONIC_RAW, &start);
@@ -369,7 +382,7 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
   int num_pages = page_ids.numel();
 
   // clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-  float* read_buffer = (float*)aligned_alloc(ALIGNMENT, num_pages * ALIGNMENT);
+  auto read_buffer = (DType*)aligned_alloc(ALIGNMENT, num_pages * ALIGNMENT);
   // clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   // auto alloc_time = (end.tv_sec - start.tv_sec) +
   //                   (end.tv_nsec - start.tv_nsec) / 1000000000.0;
@@ -378,7 +391,7 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
        inverse_idx_ptr = inverse_idx.data_ptr<int64_t>(),
        in_idx_ptr = in_idx.data_ptr<int64_t>(),
        out_idx_ptr = out_idx.data_ptr<int64_t>();
-  auto out_data_ptr = out_data.data_ptr<float>();
+  auto out_data_ptr = out_data.data_ptr<DType>();
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
 
@@ -395,7 +408,7 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
       if (!sqe) {
         LOG(FATAL) << "Could not get SQE." << " i: " << i << " j: " << j;
       }
-      io_uring_prep_read(sqe, fd, read_buffer + (j * ALIGNMENT) / sizeof(float),
+      io_uring_prep_read(sqe, fd, read_buffer + (j * ALIGNMENT) / sizeof(DType),
                          ALIGNMENT, page_ids_ptr[j] * ALIGNMENT);
       if ((j + 1) % 64 == 0 || j == r - 1) {
         io_uring_submit(&ring);
@@ -428,11 +441,11 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
   // clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 #pragma omp parallel for num_threads(omp_threads)
   for (int i = 0; i < in_idx.numel(); i++) {
-    auto in_offset = (inverse_idx_ptr[i] * ALIGNMENT) / sizeof(float);
+    auto in_offset = (inverse_idx_ptr[i] * ALIGNMENT) / sizeof(DType);
     auto residual = (in_idx_ptr[i] % num_feat_per_page) * feature_dim;
     auto out_offset = out_idx_ptr[i] * feature_dim;
     memcpy(out_data_ptr + out_offset, read_buffer + in_offset + residual,
-           feature_dim * sizeof(float));
+           feature_dim * sizeof(DType));
   }
   // clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   // auto copy_time = (end.tv_sec - start.tv_sec) +
@@ -444,5 +457,16 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
   // clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   // auto free_time = (end.tv_sec - start.tv_sec) +
   //                  (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+}
+
+void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
+                                      const torch::Tensor& out_data,
+                                      const torch::Tensor& in_idx,
+                                      const torch::Tensor& out_idx,
+                                      int64_t feature_dim, int64_t item_size) {
+  ITEMSIZE_TO_FLOAT(item_size, DType, {
+    LoadDiskCache_Direct_OMP_iouringImpl<DType>(file_path, out_data, in_idx,
+                                                out_idx, feature_dim);
+  });
 }
 }  // namespace offgs
