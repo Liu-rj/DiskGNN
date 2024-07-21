@@ -101,9 +101,9 @@ def run(args, dataset, label_offset):
     # torch.save(g, graph_path)
     # print("Done!")
 
-    # print("Saving features...")
-    # np.save(features_path, features.numpy())
-    # print("Done!")
+    print("Saving features...")
+    features.numpy().tofile(features_path)
+    print("Done!")
 
     print("Saving labels...")
     torch.save(labels, labels_path)

@@ -24,7 +24,13 @@ class OffgsDataset:
 
     @property
     def mmap_features(self):
-        features = np.load(self.features_path, mmap_mode="r")
+        features_shape = self.conf["features_shape"]
+        features = np.memmap(
+            self.features_path,
+            mode="r",
+            shape=tuple(features_shape),
+            dtype=eval(self.conf["features_dtype"].replace("torch", "np")),
+        )
         features = torch.from_numpy(features)
         return features
 
@@ -38,6 +44,10 @@ class OffgsDataset:
 
     @property
     def features(self):
-        features = np.load(self.features_path)
+        features_shape = self.conf["features_shape"]
+        features = np.fromfile(
+            self.features_path,
+            dtype=eval(self.conf["features_dtype"].replace("torch", "np")),
+        ).reshape(tuple(features_shape))
         features = torch.from_numpy(features)
         return features
