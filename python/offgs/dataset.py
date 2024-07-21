@@ -8,7 +8,7 @@ class OffgsDataset:
     def __init__(self, path):
         self.root = path
         self.graph_path = os.path.join(path, "graph.pth")
-        self.features_path = os.path.join(path, "features.npy")
+        self.features_path = os.path.join(path, "features.bin")
         self.labels_path = os.path.join(path, "labels.pth")
         self.split_idx_path = os.path.join(path, "split_idx.pth")
         conf_path = os.path.join(path, "conf.json")

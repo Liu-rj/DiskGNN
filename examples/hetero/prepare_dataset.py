@@ -91,7 +91,7 @@ def run(args, dataset, label_offset):
 
     os.makedirs(dataset_path, exist_ok=True)
     graph_path = os.path.join(dataset_path, "graph.pth")
-    features_path = os.path.join(dataset_path, "features.npy")
+    features_path = os.path.join(dataset_path, "features.bin")
     labels_path = os.path.join(dataset_path, "labels.pth")
     conf_path = os.path.join(dataset_path, "conf.json")
     split_idx_path = os.path.join(dataset_path, "split_idx.pth")
