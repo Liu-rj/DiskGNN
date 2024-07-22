@@ -67,7 +67,7 @@ def run(dataset: OffgsDataset, args):
     num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
     # segment_size = num_batches if args.segment_size == -1 else args.segment_size
 
-    # build in-mem cache
+    # determine in-mem cache indices
     tic = time.time()
     num_entries = min(
         args.feat_cache_size // (dataset.conf["feat_itemsize"] * features.shape[1]),
@@ -77,10 +77,18 @@ def run(dataset: OffgsDataset, args):
     if num_entries > torch.iinfo(torch.int32).max:
         raise ValueError
     cache_indices = sorted_idx[:num_entries]
-    address_table = torch.full((dataset.conf["total_num_nodes"],), -1, dtype=torch.int32)
+    address_table = torch.full(
+        (dataset.conf["total_num_nodes"],), -1, dtype=torch.int32
+    )
     address_table[cache_indices] = torch.arange(num_entries, dtype=torch.int32)
+
+    # save cache
+    print("Saving cache...")
     torch.save(cache_indices, f"{aux_dir}/cached_nodes.pt")
+    torch.save(features[cache_indices], f"{aux_dir}/cached_feats.pt")
     # torch.save(address_table, f"{aux_dir}/address_table.pt")
+
+    # build hashmap for in-mem cache
     key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
     cache_init_time = time.time() - tic
     print(
@@ -119,14 +127,20 @@ def run(dataset: OffgsDataset, args):
         for node_type in dataset.conf["num_nodes"].keys():
             # if dataset.conf["node_offsets"][node_type] == -1:
             #     continue
-            
+
             # calculate popularity (node counts) for packed features in each segment
             tic = time.time()
-            popularity = torch.zeros(dataset.conf["num_nodes"][node_type], dtype=torch.int32, device=device)
+            popularity = torch.zeros(
+                dataset.conf["num_nodes"][node_type], dtype=torch.int32, device=device
+            )
             for bid in range(startid, endid):
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{bid}.pt")[node_type].to(device)
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{bid}.pt")[node_type].to(
+                    device
+                )
                 input_nodes += dataset.conf["node_offsets"][node_type]
-                cold_nodes = torch.ops.offgs._CAPI_QueryHashMap(input_nodes, key, value)[0]
+                cold_nodes = torch.ops.offgs._CAPI_QueryHashMap(
+                    input_nodes, key, value
+                )[0]
                 cold_nodes -= dataset.conf["node_offsets"][node_type]
                 popularity[cold_nodes] += 1
             time_record[0] += time.time() - tic
@@ -137,9 +151,13 @@ def run(dataset: OffgsDataset, args):
             # assert disk_cache_num <= (popularity > 0).sum().item()
             cache_num = min(disk_cache_num, (popularity > 1).sum().item())
             disk_cache = seg_sorted_idx[:cache_num].cpu()
-            disk_table = torch.full((dataset.num_nodes[node_type],), -1, dtype=torch.int64)
+            disk_table = torch.full(
+                (dataset.num_nodes[node_type],), -1, dtype=torch.int64
+            )
             disk_table[disk_cache] = torch.arange(cache_num, dtype=torch.int64)
-            disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(disk_cache.to(device))
+            disk_key, disk_value = torch.ops.offgs._CAPI_BuildHashMap(
+                disk_cache.to(device)
+            )
             time_record[1] += time.time() - tic
             if (popularity > 0).sum().item() > 0:
                 tqdm.write(
@@ -215,7 +233,9 @@ def run(dataset: OffgsDataset, args):
                 disk_key, disk_value = all_disk_cache[node_type]
                 # calculate cold nodes
                 tic = time.time()
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{bid}.pt")[node_type].to(device)
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{bid}.pt")[node_type].to(
+                    device
+                )
                 input_nodes += dataset.conf["node_offsets"][node_type]
 
                 (
@@ -245,9 +265,16 @@ def run(dataset: OffgsDataset, args):
                 tic = time.time()
                 disk_cold += dataset.conf["node_offsets"][node_type]
                 packed_feats = torch.ops.offgs._CAPI_GatherPReadDirect(
-                    dataset.features_path, disk_cold.cpu(), dataset.num_features
+                    dataset.features_path,
+                    disk_cold.cpu(),
+                    dataset.num_features,
+                    dataset.conf["feat_itemsize"],
                 )
                 time_record[8] += time.time() - tic
+
+                if not torch.equal(packed_feats, features[disk_cold.cpu()]):
+                    print("Error: packed_feats not equal to features")
+                    exit()
 
                 # save meta data
                 tic = time.time()
@@ -260,7 +287,10 @@ def run(dataset: OffgsDataset, args):
                     mem_loc.cpu(),
                     rev_hot_idx.cpu(),
                 ]
-                torch.save(aux_meta_data, f"{aux_dir}/meta_data/train-aux-meta-{bid}-{node_type}.pt")
+                torch.save(
+                    aux_meta_data,
+                    f"{aux_dir}/meta_data/train-aux-meta-{bid}-{node_type}.pt",
+                )
                 time_record[9] += time.time() - tic
 
                 # save packed features

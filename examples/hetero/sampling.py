@@ -188,7 +188,7 @@ def main(args):
         num_workers=args.num_workers,
     )
 
-    loader_len = (train_set[:][category][0].numel() + 1024 - 1) // 1024
+    loader_len = (train_set[:][category][0].numel() + args.batchsize - 1) // args.batchsize
 
     start = time.time()
     node_counts = {
@@ -271,5 +271,6 @@ if __name__ == "__main__":
     parser.add_argument("--ratio", type=float, default=1.0)
 
     args = parser.parse_args()
+    print(args)
 
     main(args)

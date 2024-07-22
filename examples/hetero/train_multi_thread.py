@@ -51,7 +51,15 @@ def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id, dataset):
         transfer_queue.put(all_transfer_info)
 
 
-def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
+def load_feats(
+    in_queue,
+    out_queue,
+    aux_dir,
+    batch_id,
+    dataset,
+    segment_size,
+    # mmap_features,
+):
     torch.ops.offgs._CAPI_Init_iouring()
     for i in batch_id:
         all_feat_load_info = in_queue.get()
@@ -61,7 +69,7 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
             num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
             disk_feats = torch.empty(
                 (num_disk, dataset.num_features),
-                dtype=torch.float32,
+                dtype=eval(dataset.conf["features_dtype"]),
                 pin_memory=True,
             )
 
@@ -70,7 +78,11 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
                     f"{aux_dir}/feat/train-aux-{i}-{node_type}.bin",
                     disk_cold.numel(),
                     dataset.num_features,
+                    dataset.conf["feat_itemsize"],
                 )
+
+                # mmap_cold_feats = mmap_features[disk_cold]
+
                 disk_feats[disk_rev_cold_idx] = cold_feats
 
             torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
@@ -79,6 +91,7 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
                 disk_loc,
                 disk_rev_hot_idx,
                 dataset.num_features,
+                dataset.conf["feat_itemsize"],
             )
 
             all_disk_feats[node_type] = disk_feats
@@ -96,6 +109,8 @@ def feat_transfer(
     batch_id,
     dataset,
     device,
+    # subg_dir,
+    # mmap_features,
 ):
     for i in batch_id:
         all_transfer_info = in_queue.get()
@@ -109,7 +124,7 @@ def feat_transfer(
             num_input = num_disk + mem_loc.numel()
             x = torch.empty(
                 (num_input, dataset.num_features),
-                dtype=torch.float32,
+                dtype=eval(dataset.conf["features_dtype"]),
                 device=device,
             )
             if num_disk > 0:
@@ -123,9 +138,15 @@ def feat_transfer(
                     gpu_cached_feats,
                     mem_loc.to(device),
                 )
-            s.synchronize()
+            # s.synchronize()
+            torch.cuda.synchronize()
 
-            all_x[node_type] = x
+            # input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+            # idx = input_nodes[node_type][rev_hot_idx]
+            # offset = dataset.conf["node_offsets"][node_type]
+            # x[rev_hot_idx] = mmap_features[idx + offset].to(device)
+
+            all_x[node_type] = x.float()
         out_queue.put(all_x)
 
 
@@ -144,14 +165,15 @@ def train(
     acc_logfile = f"acc/logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
     torch.cuda.set_device(device)
 
+    mmap_features = dataset.mmap_features
     if args.debug:
         graph = dataset.graph
-        features = dataset.features.pin_memory()
+        # features = dataset.features.pin_memory()
+        mmap_features = dataset.mmap_features
     labels = dataset.labels
     cpu_cached_feats = cpu_cached_feats.pin_memory()
     label_offset = dataset.conf["label_offset"]
 
-    sampler = NeighborSampler(fanout)
     model = RGCN(
         dataset.conf["etypes"],
         dataset.conf["ntypes"],
@@ -167,6 +189,7 @@ def train(
     pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
 
     if args.debug:
+        sampler = NeighborSampler(fanout)
         val_dataloader = DataLoader(
             graph,
             dataset.split_idx["valid"],
@@ -233,6 +256,7 @@ def train(
                     batch_id,
                     dataset,
                     args.segment_size,
+                    # mmap_features,
                 ),
                 daemon=True,
             )
@@ -250,6 +274,8 @@ def train(
                     batch_id,
                     dataset,
                     device,
+                    # subg_dir,
+                    # mmap_features,
                 ),
                 daemon=True,
             )
@@ -278,16 +304,50 @@ def train(
                 info_recorder[4] += feat.numel()
 
             if args.debug:
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt").to(device)
-                input_feats = gather_pinned_tensor_rows(features, input_nodes)
-                assert torch.equal(x, input_feats)
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+                for node_type, nid in input_nodes.items():
+                    offset = dataset.conf["node_offsets"][node_type]
+                    input_feats = mmap_features[nid + offset].to(device).float()
+                    assert torch.equal(x[node_type], input_feats)
+
+            # for key, value in x.items():
+            #     print(key, torch.isnan(value).sum().item(), value.shape)
 
             # tic = time.time()
             logits = model(blocks, x)[category]
 
             y_hat = logits.log_softmax(dim=-1)
             loss = F.nll_loss(y_hat, y)
-            tot_loss += loss.item()
+
+            if (
+                torch.isnan(logits).sum().item() != 0
+                or torch.isnan(y_hat).sum().item() != 0
+                or torch.isnan(y).sum().item() != 0
+                or torch.isnan(loss).sum().item() != 0
+            ):
+                print(
+                    torch.isnan(logits).sum().item(),
+                    torch.isnan(y_hat).sum().item(),
+                    torch.isnan(y).sum().item(),
+                    torch.isnan(loss).sum().item(),
+                    logits.shape,
+                    i,
+                )
+
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+                for node_type, nid in input_nodes.items():
+                    offset = dataset.conf["node_offsets"][node_type]
+                    input_feats = dataset.mmap_features[nid + offset].to(device).float()
+                    print(
+                        node_type,
+                        offset,
+                        torch.isnan(x[node_type]).sum().item(),
+                        torch.isnan(input_feats).sum().item(),
+                        torch.equal(x[node_type], input_feats),
+                    )
+                exit()
+
+            tot_loss += loss.item() * blocks[-1].num_dst_nodes(category)
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -313,8 +373,8 @@ def train(
                 tqdm(val_dataloader, ncols=100)
             ):
                 blocks = [block.to(device) for block in blocks]
-                x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                # x = features[input_nodes.cpu()].to(device)
+                # x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                x = mmap_features[input_nodes.cpu()].to(device)
                 y = gather_pinned_tensor_rows(
                     labels, output_nodes - label_offset
                 ).long()
@@ -333,8 +393,8 @@ def train(
                     tqdm(test_dataloader, ncols=100)
                 ):
                     blocks = [block.to(device) for block in blocks]
-                    x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                    # x = features[input_nodes.cpu()].to(device)
+                    # x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                    x = mmap_features[input_nodes.cpu()].to(device)
                     y = gather_pinned_tensor_rows(
                         labels, output_nodes - label_offset
                     ).long()
@@ -351,7 +411,7 @@ def train(
 
             print(
                 f"Epoch: {epoch}\t"
-                f"Loss: {tot_loss:.10f}\t"
+                f"Loss: {tot_loss:.4f}\t"
                 f"Valid acc: {val_acc * 100:.2f}%\t"
                 f"Test acc: {test_acc * 100:.2f}%\t"
             )
@@ -378,6 +438,7 @@ def train(
             f"Epoch Time: {epoch_time:.3f}\t"
             f"Cold Feats Num: {info_recorder[3]}\t"
             f"Input Feature Num: {info_recorder[4]}\t"
+            f"Loss: {tot_loss:.10f}\t"
             f"Train acc: {train_acc * 100:.2f}%"
         )
         for i, info in enumerate(info_recorder):
@@ -413,16 +474,13 @@ def train(
         writer.writerow(log_info)
 
 
-def init_cache(args, dataset, cached_nodes):
+def init_cache(args, dataset, cached_feats):
     device = torch.device(f"cuda:{args.device}")
-    gpu_num_entries = args.gpu_cache_size // (4 * dataset.num_features)
-    gpu_cached_idx = cached_nodes[:gpu_num_entries]
-    cpu_cache_idx = cached_nodes[gpu_num_entries:]
-    gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
-    cpu_cached_feats = torch.empty(
-        (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
+    gpu_num_entries = args.gpu_cache_size // (
+        dataset.conf["feat_itemsize"] * dataset.num_features
     )
-    cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
+    gpu_cached_feats = cached_feats[:gpu_num_entries].to(device)
+    cpu_cached_feats = cached_feats[gpu_num_entries:]
     return cpu_cached_feats, gpu_cached_feats
 
 
@@ -439,12 +497,15 @@ def start(args):
     mem = process.memory_info().rss / (1024 * 1024 * 1024)
 
     dataset = OffgsDataset(dataset_dir)
-    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+    # cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+    cached_feats = torch.load(f"{aux_dir}/cached_feats.pt")
 
     (
         cpu_cached_feats,
         gpu_cached_feats,
-    ) = init_cache(args, dataset, cached_nodes)
+    ) = init_cache(args, dataset, cached_feats)
+    print("CPU Cache Shape:", cpu_cached_feats.shape, "dtype:", cpu_cached_feats.dtype)
+    print("GPU Cache Shape:", gpu_cached_feats.shape, "dtype:", gpu_cached_feats.dtype)
 
     args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.conf["total_num_nodes"]
     args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.conf["total_num_nodes"]
@@ -490,10 +551,5 @@ if __name__ == "__main__":
     print(args)
     args.cpu_cache_size = int(args.cpu_cache_size)
     args.gpu_cache_size = int(args.gpu_cache_size)
-
-    # node_feature_keys = {"paper": ["feat"]}
-    # if args.dataset == "ogb-lsc-mag240m":
-    #     node_feature_keys["author"] = ["feat"]
-    #     node_feature_keys["institution"] = ["feat"]
 
     start(args)
