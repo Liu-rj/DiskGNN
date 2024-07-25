@@ -8,7 +8,7 @@ import json
 from offgs.dataset import OffgsDataset
 import csv
 import os
-import utils
+import shutil
 
 import offgs
 
@@ -149,14 +149,12 @@ def run(dataset: OffgsDataset, args):
     subg_dir = os.path.join(args.store_path, subg_dir)
     aux_dir = f"{subg_dir}/cache-size-{args.feat_cache_size:g}/blowup-{args.blowup}"
 
-    if not os.path.exists(aux_dir):
-        os.makedirs(aux_dir)
-    if not os.path.exists(f"{aux_dir}/feat"):
-        os.mkdir(f"{aux_dir}/feat")
-    if not os.path.exists(f"{aux_dir}/meta_data"):
-        os.mkdir(f"{aux_dir}/meta_data")
-    if not os.path.exists(f"{aux_dir}/disk_cache"):
-        os.mkdir(f"{aux_dir}/disk_cache")
+    if os.path.exists(aux_dir):
+        shutil.rmtree(aux_dir)
+    os.makedirs(aux_dir)
+    os.mkdir(f"{aux_dir}/feat")
+    os.mkdir(f"{aux_dir}/meta_data")
+    os.mkdir(f"{aux_dir}/disk_cache")
 
     node_counts = torch.load(f"{subg_dir}/node_counts.pt").cpu()
     sorted_idx = torch.load(f"{subg_dir}/meta_node_popularity.pt").cpu()
@@ -222,7 +220,6 @@ def run(dataset: OffgsDataset, args):
     # iterate over segments of graph samples to generate indices
     all_disk_cold = []
     all_disk_rev_cold_idx = []
-    sliced_feature_num = 0
     for segid in trange(num_segments, ncols=100):
         startid = segid * segment_size
         endid = min((segid + 1) * segment_size, num_batches)
@@ -288,7 +285,7 @@ def run(dataset: OffgsDataset, args):
             # save meta data
             tic = time.time()
             aux_meta_data = [
-                disk_cold.cpu(),
+                # disk_cold.cpu(),
                 # disk_rev_cold_idx.cpu(),
                 disk_loc.cpu(),
                 disk_rev_hot_idx.cpu(),
@@ -300,8 +297,10 @@ def run(dataset: OffgsDataset, args):
             time_record[9] += time.time() - tic
 
     # iterate over segments of features to generate pack features
+    sliced_feature_num = 0
     all_cache_rev_ind = []
     all_disk_rev_cold_idx_new_order = [[] for _ in range(num_batches)]
+    all_disk_cold_new_order = [[] for _ in range(num_batches)]
     for partid in range(num_seg_dataset):
         ## init a table with a size of dataset.num_nodes (torch.tensor)
         table = torch.full((dataset.num_nodes,), 0, dtype=bool)
@@ -312,7 +311,7 @@ def run(dataset: OffgsDataset, args):
 
         # load feature partition
         tic = time.time()
-        features = torch.ops.offgs._CAPI_LoadFeats_Direct_lseek(
+        feature_part = torch.ops.offgs._CAPI_LoadFeats_Direct_lseek(
             dataset.features_path,
             current_indices,
             step_indices,
@@ -326,7 +325,7 @@ def run(dataset: OffgsDataset, args):
         part_cache_mask = table[cache_indices]
         part_cache_id = cache_indices[part_cache_mask]
         part_cache_rev_ind = cache_local_idx[part_cache_mask]
-        part_cache_feats = features[part_cache_id - current_indices]
+        part_cache_feats = feature_part[part_cache_id - current_indices]
         all_cache_rev_ind.append(part_cache_rev_ind)
         torch.ops.offgs._CAPI_SaveFeatsAppend(
             f"{aux_dir}/cached_feats.bin", part_cache_feats
@@ -339,7 +338,7 @@ def run(dataset: OffgsDataset, args):
             endid = min((segid + 1) * segment_size, num_batches)
 
             # pack cold features
-            for it, bid in enumerate(range(startid, endid)):
+            for bid in range(startid, endid):
                 disk_cold = all_disk_cold[bid]
                 disk_rev_cold_idx = all_disk_rev_cold_idx[bid]
 
@@ -348,10 +347,10 @@ def run(dataset: OffgsDataset, args):
                 # Boolean mask to identify the true indices within input_node
                 mask = table[disk_cold]
                 # Find the indices of the true values within input_node
-                true_indices = disk_cold[mask]
+                all_disk_cold_new_order[bid].append(disk_cold[mask])
                 all_disk_rev_cold_idx_new_order[bid].append(disk_rev_cold_idx[mask])
-                ## slice the true incides infeatures
-                features_slice = features[true_indices - current_indices]
+                ## slice the required features in current partition
+                features_slice = feature_part[disk_cold[mask] - current_indices]
                 time_record[8] += time.time() - tic
                 sliced_feature_num += features_slice.shape[0]
 
@@ -367,8 +366,11 @@ def run(dataset: OffgsDataset, args):
     tic = time.time()
     for bid in range(num_batches):
         torch.save(
-            torch.cat(all_disk_rev_cold_idx_new_order[bid]),
-            f"{aux_dir}/meta_data/disk-rev-cold-{bid}.pt",
+            [
+                torch.cat(all_disk_cold_new_order[bid]),
+                torch.cat(all_disk_rev_cold_idx_new_order[bid]),
+            ],
+            f"{aux_dir}/meta_data/disk-cold-idx-{bid}.pt",
         )
     time_record[9] += time.time() - tic
 

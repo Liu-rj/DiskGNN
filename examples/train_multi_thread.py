@@ -29,7 +29,7 @@ def load_graph(queue, path, batch_id, labels, label_offset):
 def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
     for i in batch_id:
         (
-            disk_cold,
+            # disk_cold,
             # disk_rev_cold_idx,
             disk_loc,
             disk_rev_hot_idx,
@@ -37,7 +37,10 @@ def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
             mem_loc,
             rev_hot_idx,
         ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
-        disk_rev_cold_idx = torch.load(f"{aux_dir}/meta_data/disk-rev-cold-{i}.pt")
+        (
+            disk_cold,
+            disk_rev_cold_idx,
+        ) = torch.load(f"{aux_dir}/meta_data/disk-cold-idx-{i}.pt")
         feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
         transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
 
@@ -154,7 +157,6 @@ def train(
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_num = dataset.split_idx["train"].numel()
-    size = (train_num + args.batchsize - 1) // args.batchsize
     print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
     pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
 
@@ -188,11 +190,6 @@ def train(
         # with open("/proc/sys/vm/drop_caches", "w") as stream:
         #     stream.write("1\n")
 
-        # batch_id = []
-        # while len(batch_id) < size:
-        #     permutation = torch.randperm(pool_size).tolist()
-        #     batch_id += permutation
-        # batch_id = batch_id[:size]
         batch_id = torch.randperm(pool_size).tolist()
 
         threads = []
