@@ -167,7 +167,7 @@ def main(args):
         test_set,
         num_classes,
     ) = load_dataset(args.dataset)
-
+    g.pin_memory_()
     print(g)
 
     category = "paper"

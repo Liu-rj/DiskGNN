@@ -30,13 +30,14 @@ def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
     for i in batch_id:
         (
             disk_cold,
-            disk_rev_cold_idx,
+            # disk_rev_cold_idx,
             disk_loc,
             disk_rev_hot_idx,
             rev_cold_idx,
             mem_loc,
             rev_hot_idx,
         ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
+        disk_rev_cold_idx = torch.load(f"{aux_dir}/meta_data/disk-rev-cold-{i}.pt")
         feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
         transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
 
@@ -57,16 +58,19 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
                 f"{aux_dir}/feat/train-aux-{i}.bin",
                 disk_cold.numel(),
                 dataset.num_features,
+                dataset.conf["feat_itemsize"],
             )
             disk_feats[disk_rev_cold_idx] = cold_feats
 
-        torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-            f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
-            disk_feats,
-            disk_loc,
-            disk_rev_hot_idx,
-            dataset.num_features,
-        )
+        if disk_loc.numel() > 0:
+            torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
+                f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
+                disk_feats,
+                disk_loc,
+                disk_rev_hot_idx,
+                dataset.num_features,
+                dataset.conf["feat_itemsize"],
+            )
 
         out_queue.put(disk_feats)
     torch.ops.offgs._CAPI_Exit_iouring()
@@ -181,8 +185,8 @@ def train(
     best_val_acc, best_test_acc, best_epoch = 0, 0, 0
     epoch_info_recorder = [[] for i in range(6)]
     for epoch in range(args.num_epoch):
-        with open("/proc/sys/vm/drop_caches", "w") as stream:
-            stream.write("1\n")
+        # with open("/proc/sys/vm/drop_caches", "w") as stream:
+        #     stream.write("1\n")
 
         # batch_id = []
         # while len(batch_id) < size:
@@ -404,16 +408,13 @@ def train(
         writer.writerow(log_info)
 
 
-def init_cache(args, dataset, cached_nodes):
+def init_cache(args, dataset, cached_feats):
     device = torch.device(f"cuda:{args.device}")
-    gpu_num_entries = args.gpu_cache_size // (4 * dataset.num_features)
-    gpu_cached_idx = cached_nodes[:gpu_num_entries]
-    cpu_cache_idx = cached_nodes[gpu_num_entries:]
-    gpu_cached_feats = dataset.mmap_features[gpu_cached_idx].to(device)
-    cpu_cached_feats = torch.empty(
-        (cpu_cache_idx.numel(), dataset.num_features), dtype=torch.float32
+    gpu_num_entries = args.gpu_cache_size // (
+        dataset.conf["feat_itemsize"] * dataset.num_features
     )
-    cpu_cached_feats[:] = dataset.mmap_features[cpu_cache_idx]
+    gpu_cached_feats = cached_feats[:gpu_num_entries].to(device)
+    cpu_cached_feats = cached_feats[gpu_num_entries:]
     return cpu_cached_feats, gpu_cached_feats
 
 
@@ -431,11 +432,21 @@ def start(args):
 
     dataset = OffgsDataset(dataset_dir)
     cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+    # cached_feats = torch.load(f"{aux_dir}/cached_feats.pt")
+    cached_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
+        f"{aux_dir}/cached_feats.bin",
+        cached_nodes.numel(),
+        dataset.num_features,
+        dataset.conf["feat_itemsize"],
+    )
+    cache_rev_idx = torch.load(f"{aux_dir}/cache_rev_idx.pt")
+    correct_cached_feats = torch.empty_like(cached_feats)
+    correct_cached_feats[cache_rev_idx] = cached_feats
 
     (
         cpu_cached_feats,
         gpu_cached_feats,
-    ) = init_cache(args, dataset, cached_nodes)
+    ) = init_cache(args, dataset, correct_cached_feats)
 
     args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
     args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
