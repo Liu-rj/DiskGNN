@@ -1,6 +1,6 @@
 data_path=/nvme2n1/offgs_dataset
 
-# python prepare_dataset.py --dataset ogbn-papers100M-seeds --store-path $data_path
+python prepare_dataset.py --dataset ogbn-papers100M-seeds --store-path $data_path
 
 sudo sysctl -w vm.drop_caches=1
 python sampling.py --dataset ogbn-papers100M-seeds --fanout "10,10,10" --store-path $data_path --ratio 1.0
