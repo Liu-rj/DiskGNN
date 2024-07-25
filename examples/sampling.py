@@ -135,6 +135,8 @@ def run(args, dataset: OffgsDataset):
 
     g = dataset.graph
     g.pin_memory_()
+    print(g)
+
     train_nid = (
         dataset.split_idx["train"]
         if args.ratio == 1.0
@@ -145,20 +147,6 @@ def run(args, dataset: OffgsDataset):
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory consumption:", mem1 - mem, "GB")
-
-    # train_nid = dataset.split_idx["train"]
-    # int_part, dec_part2 = int(args.ratio), args.ratio - int(args.ratio)
-    # dec_size = int(dec_part2 * train_nid.numel())
-    # perm_idx = [torch.randperm(train_nid.numel()) for i in range(int_part)]
-    # perm_idx.append(torch.randperm(train_nid.numel())[:dec_size])
-    # perm_idx = torch.cat(perm_idx, dim=0)
-    # print(
-    #     f"Subsampled {perm_idx.numel()} nodes from {train_nid.numel()} nodes,",
-    #     f"Down Sample Ratio: {perm_idx.numel() / train_nid.numel()}",
-    #     f"Train Node Ratio: {perm_idx.numel() / g.num_nodes}",
-    # )
-    # train_nid = train_nid[perm_idx]  # subsample
-    # torch.save(train_nid, f"{dataset_path}/train_idx_{args.ratio}.pt")
 
     dataloader = create_dataloader(
         graph=g,
@@ -189,7 +177,7 @@ def run(args, dataset: OffgsDataset):
         sample_time += time.time() - tic
 
         input_nodes = data.input_nodes.long()
-        output_nodes = data.seed_nodes.long()
+        output_nodes = data.seeds.long()
 
         tic = time.time()
         torch.save(blocks, f"{output_dir}/train-{i}.pt")
