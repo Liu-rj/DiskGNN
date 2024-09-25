@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-from offgs.utils import SAGE, GAT
+from offgs.utils import SAGE, GAT, GCN
 from offgs.dataset import OffgsDataset
 import threading
 import queue
@@ -188,6 +188,16 @@ def train(
             len(fanout),
             args.dropout,
         ).to(device)
+    elif args.model == "GCN":
+        model = GCN(
+            dataset.num_features,
+            args.hidden,
+            dataset.num_classes,
+            len(fanout),
+            args.dropout,
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported model: {args.model}")
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_num = dataset.split_idx["train"].numel()
