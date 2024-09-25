@@ -1,5 +1,5 @@
 import torch
-from dgl.dataloading import DataLoader, NeighborSampler
+from dgl.dataloading import DataLoader, NeighborSampler, ShaDowKHopSampler
 from dgl.utils import gather_pinned_tensor_rows
 import time
 import argparse
@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from tqdm import tqdm, trange
 import pandas as pd
 from load_graph import *
-from offgs.utils import SAGE, GAT
+from offgs.utils import SAGE, GAT, GCN
 from offgs.dataset import OffgsDataset
 from queue import Queue
 import threading
@@ -56,6 +56,16 @@ def train(
             dataset.num_classes,
             [8, 2],
         ).to(device)
+    elif args.model == "GCN":
+        model = GCN(
+            dataset.num_features,
+            256,
+            dataset.num_classes,
+            len(fanout),
+            args.dropout,
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported model: {args.model}")
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
     train_nid = (
