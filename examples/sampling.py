@@ -1,15 +1,12 @@
 import torch
 from dgl.dataloading import DataLoader, NeighborSampler
 import argparse
-import numpy as np
-from tqdm import tqdm, trange
-import matplotlib.pyplot as plt
-from load_graph import *
+import os
 import psutil
 import time
-import json
 from offgs.dataset import OffgsDataset
 import csv
+from tqdm import tqdm
 
 import offgs
 
@@ -38,20 +35,6 @@ def run(args, dataset: OffgsDataset):
 
     mem1 = process.memory_info().rss / (1024 * 1024 * 1024)
     print("Memory consumption:", mem1 - mem, "GB")
-
-    # train_nid = dataset.split_idx["train"]
-    # int_part, dec_part2 = int(args.ratio), args.ratio - int(args.ratio)
-    # dec_size = int(dec_part2 * train_nid.numel())
-    # perm_idx = [torch.randperm(train_nid.numel()) for i in range(int_part)]
-    # perm_idx.append(torch.randperm(train_nid.numel())[:dec_size])
-    # perm_idx = torch.cat(perm_idx, dim=0)
-    # print(
-    #     f"Subsampled {perm_idx.numel()} nodes from {train_nid.numel()} nodes,",
-    #     f"Down Sample Ratio: {perm_idx.numel() / train_nid.numel()}",
-    #     f"Train Node Ratio: {perm_idx.numel() / g.num_nodes()}",
-    # )
-    # train_nid = train_nid[perm_idx]  # subsample
-    # torch.save(train_nid, f"{dataset_path}/train_idx_{args.ratio}.pt")
 
     sampler = NeighborSampler(fanout)
     train_dataloader = DataLoader(
