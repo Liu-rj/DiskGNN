@@ -482,7 +482,6 @@ if __name__ == "__main__":
     parser.add_argument("--blowup", type=float, default=-1)
     parser.add_argument("--num-epoch", type=int, default=3)
     parser.add_argument("--ratio", type=float, default=1)
-    parser.add_argument("--sampler", type=str, default="NS")
     parser.add_argument("--log", type=str, default="logs/train_multi_thread.csv")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--log_every", type=int, default=1)
