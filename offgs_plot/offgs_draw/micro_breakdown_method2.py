@@ -12,9 +12,6 @@ plt.rcParams["text.usetex"] = True
 SAVE_PTH = "../figures"
 font_size = 16
 
-
-import csv
-
 file_path = "../offgs_data/breakdown_method2.csv"
 
 with open(file_path, mode="r", newline="") as file:

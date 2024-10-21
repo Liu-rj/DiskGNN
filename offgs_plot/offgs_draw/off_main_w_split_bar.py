@@ -20,13 +20,14 @@ with open(file_path, mode="r", newline="") as file:
     reader = csv.reader(file)
     data = list(reader)
 
+# 打印原始数据
+for row in data:
+    print(",".join(row))
+
 # 修改数据：将第六列的值加到第五列
-for row in data[1:]:
-    row[4] = str(round(float(row[4]) + float(row[5]), 2))
-    row[4], row[5], row[6], row[7] = row[7], row[5], row[4], row[8]
-    row.insert(5, row[-1])
-    ##remove row[8]
-    row = row[:-2]
+for it, row in enumerate(data):
+    data[it] = row[:-1]
+    data[it][7] = "Ginex+Preprocess" if it == 0 else str(float(row[7]) + float(row[6]))
 
 
 # 打印修改后的数据
@@ -34,23 +35,21 @@ for row in data:
     print(",".join(row))
 
 ## save the new data
-new_file_path = "../Graph_NN_Benchmarks_new.csv"
-with open(new_file_path, mode="w", newline="") as file:
-    writer = csv.writer(file)
-    writer.writerows(data)
+# new_file_path = "../Graph_NN_Benchmarks_new.csv"
+# with open(new_file_path, mode="w", newline="") as file:
+#     writer = csv.writer(file)
+#     writer.writerows(data)
 
 for row in data[1:]:
     normalize = float(row[2])
-    for j in range(2, 9):
+    for j in range(2, len(row)):
         row[j] = str(round(float(row[j]) / normalize, 2))
 ##
 print("after normalization")
 speedup_list = []
-marius_preprocess = []
 for it, row in enumerate(data):
     print(",".join(row))
     if it > 0:
-        marius_preprocess.append(row[3])
         if it == 7 or it == 8:
             speedup_list += row[4:-2]
         else:
@@ -59,7 +58,7 @@ print("Average Speedup:", np.mean([float(x) for x in speedup_list]))
 
 
 models = ["SAGE", "GAT"]
-datasets = ["Ogbn-papers100M", "MAG240M", "Friendster", "IGB-HOM"]
+datasets = ["Ogbn-papers100M (5GB)", "MAG240M (10GB)", "Friendster (3GB)", "IGB-HOM (15GB)"]
 data = [[float(cell) if cell.isdigit() else cell for cell in row] for row in data[1:]]
 for k, model in enumerate(models):
 
@@ -73,7 +72,7 @@ for k, model in enumerate(models):
     x = np.arange(group) * n
     exit_idx_x = x + (total_width - width) / n
     edgecolors = ["dimgrey", "lightseagreen", "tomato", "slategray", "silver"]
-    hatches = ["", "\\\\", "//", "||", "x", "--", "..", "xx", "oo", ".."]
+    hatches = ["", "\\\\", "//", "||", "x", "--", ".."]
 
     labels = [
         "DiskGNN",
@@ -84,16 +83,16 @@ for k, model in enumerate(models):
         "Ginex+Preprocess",
         "DGL-OnDisk",
     ]
-    colorlist = ["white", "white", "white", "white", "white", "white", "k"]
     if k == 0:
         x_labels = "GraphSAGE"
     else:
         x_labels = "GAT"
 
     yticks = np.arange(0, 11, 2)
+    val_limit = 11
 
     for i in range(4):
-        val_limit = yticks[-1]
+        # val_limit = yticks[-1]
         axes[i].set_yticks(yticks)
         axes[i].set_ylim(0, val_limit)
 
@@ -123,8 +122,6 @@ for k, model in enumerate(models):
                 label=labels[j],
                 zorder=10,
             )
-            if j == 6 and i == 3:
-                plot_label = ["N/A"]
             axes[i].bar_label(
                 container,
                 plot_label,
@@ -158,6 +155,6 @@ for k, model in enumerate(models):
     axes[2].set_yticklabels([])
     axes[3].set_yticklabels([])
 
-    plt.savefig(f"{SAVE_PTH }/speed_{model}.pdf", bbox_inches="tight", dpi=300)
+    plt.savefig(f"{SAVE_PTH }/speed_{model}_revised.pdf", bbox_inches="tight", dpi=300)
     ## print save
-    print(f"{SAVE_PTH }/speed_{model}.pdf")
+    print(f"{SAVE_PTH }/speed_{model}_revised.pdf")
