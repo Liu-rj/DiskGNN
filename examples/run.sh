@@ -3,7 +3,7 @@
 data_path=/data/offgs_dataset
 
 # Ogbn-papers100M
-python prepare_dataset.py --dataset=ogbn-papers100M
+python prepare_dataset.py --dataset ogbn-papers100M --store-path $data_path
 sudo env PATH=$PATH python sampling.py --dataset ogbn-papers100M --fanout "10,15,20" --store-path $data_path --ratio 1.0
 sudo env PATH=$PATH python feat_packing.py --dataset ogbn-papers100M --fanout "10,15,20" --feat-cache-size 5e9 --store-path $data_path --ratio 1.0 --blowup -1
 # speed

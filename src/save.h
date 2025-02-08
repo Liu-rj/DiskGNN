@@ -6,6 +6,8 @@
 
 namespace offgs {
 void SaveFeats(const std::string& file_path, const torch::Tensor& feature);
+
+void SaveFeatsAppend(const std::string& file_path, const torch::Tensor& feature);
 }  // namespace offgs
 
 #endif  // OFFGS_SAVE_H

@@ -31,6 +31,7 @@ TORCH_LIBRARY(offgs, m) {
         &LoadDiskCache_Direct_OMP_iouring);
   m.def("_CAPI_LoadTensor", &LoadTensor);
   m.def("_CAPI_SaveFeats", &SaveFeats);
+  m.def("_CAPI_SaveFeatsAppend", &SaveFeatsAppend);
   m.def("_CAPI_IndexSearch", &cuda::IndexSearch);
   m.def("_CAPI_FreeTensor", &FreeTensor);
   m.def("_CAPI_SegmentedMinHash", &cuda::SegmentedMinHash);

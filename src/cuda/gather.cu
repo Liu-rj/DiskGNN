@@ -1,3 +1,4 @@
+#include "../utils.h"
 #include "atomic.h"
 #include "cuda_common.h"
 #include "gather.h"
@@ -68,7 +69,8 @@ __global__ void IndexSelectMultiKernelAligned(
   }
 }
 
-void GatherInGPU(torch::Tensor& out, const torch::Tensor& out_idx,
+template <typename DType>
+void GatherInGPUImpl(torch::Tensor& out, const torch::Tensor& out_idx,
                  const torch::Tensor& in_cpu, const torch::Tensor& in_gpu,
                  const torch::Tensor& in_idx) {
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
@@ -77,9 +79,9 @@ void GatherInGPU(torch::Tensor& out, const torch::Tensor& out_idx,
   assert(out.sizes()[1] == in_cpu.sizes()[1]);
   auto feature_dim = out.sizes()[1];
 
-  auto out_dataptr = out.data_ptr<float>();
-  auto in_cpu_dataptr = in_cpu.data_ptr<float>();
-  auto in_gpu_dataptr = in_gpu.data_ptr<float>();
+  auto out_dataptr = out.data_ptr<DType>();
+  auto in_cpu_dataptr = in_cpu.data_ptr<DType>();
+  auto in_gpu_dataptr = in_gpu.data_ptr<DType>();
   auto in_idx_ptr = in_idx.data_ptr<int64_t>();
   auto out_idx_ptr = out_idx.data_ptr<int64_t>();
   auto boundary = in_gpu.size(0);
@@ -91,17 +93,27 @@ void GatherInGPU(torch::Tensor& out, const torch::Tensor& out_idx,
     block.y *= 2;
   }
   const dim3 grid((num_idx + block.y - 1) / block.y);
-  if (feature_dim * sizeof(float) < 2 * CACHE_LINE_SIZE) {
-    CUDA_KERNEL_CALL((IndexSelectMultiKernel<float, int64_t>), grid, block, 0,
+  if (feature_dim * sizeof(DType) < 2 * CACHE_LINE_SIZE) {
+    CUDA_KERNEL_CALL((IndexSelectMultiKernel<DType, int64_t>), grid, block, 0,
                      stream, in_cpu_dataptr, in_gpu_dataptr, feature_dim,
                      in_idx_ptr, out_idx_ptr, num_idx, out_dataptr, boundary,
                      cache_len);
   } else {
-    CUDA_KERNEL_CALL((IndexSelectMultiKernelAligned<float, int64_t>), grid,
+    CUDA_KERNEL_CALL((IndexSelectMultiKernelAligned<DType, int64_t>), grid,
                      block, 0, stream, in_cpu_dataptr, in_gpu_dataptr,
                      feature_dim, in_idx_ptr, out_idx_ptr, num_idx, out_dataptr,
                      boundary, cache_len);
   }
+}
+
+void GatherInGPU(torch::Tensor& out, const torch::Tensor& out_idx,
+                 const torch::Tensor& in_cpu, const torch::Tensor& in_gpu,
+                 const torch::Tensor& in_idx) {
+  assert(in_cpu.scalar_type() == in_gpu.scalar_type());
+  assert(in_cpu.scalar_type() == out.scalar_type());
+  FLOAT_TYPE_SWITCH(out.scalar_type(), DType, {
+    GatherInGPUImpl<DType>(out, out_idx, in_cpu, in_gpu, in_idx);
+  });
 }
 
 template <typename DType, typename IdType, typename MapIdType>

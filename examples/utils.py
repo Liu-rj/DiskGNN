@@ -184,7 +184,7 @@ def gen_train(ratio=0.01, name="train_001.pth"):
         "--dataset",
         type=str,
         default="ogbn-products",
-        help="which dataset to load for training",
+        help="which dataset to load",
     )
     parser.add_argument(
         "--store-path", default="/nvme1n1/offgs_dataset", help="path to store subgraph"
@@ -200,6 +200,18 @@ def gen_train(ratio=0.01, name="train_001.pth"):
     train_001 = torch.randperm(num_nodes)[: int(num_nodes * ratio)]
     print(f"Ratio: {train_001.numel() / num_nodes}")
     torch.save(train_001, os.path.join(dataset_path, name))
+
+
+def gen_feature(dataset, root, new_feat_dim):
+    # --- load dataset --- #
+    dataset_path = f"{root}/{dataset}-offgs"
+    dataset = OffgsDataset(dataset_path)
+    features = dataset.features
+
+    repeat_count = new_feat_dim // features.shape[1]
+    new_feat = features.repeat(1, repeat_count).contiguous()
+
+    new_feat.numpy().tofile(os.path.join(dataset_path, f"features_{new_feat_dim}.bin"))
 
 
 def kill_proc(p):

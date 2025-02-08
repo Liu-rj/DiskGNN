@@ -6,6 +6,7 @@
 
 #include "gather.h"
 #include "state.h"
+#include "utils.h"
 
 #define ALIGNMENT 4096
 #define RING_LEN 1024
@@ -58,19 +59,20 @@ torch::Tensor GatherPRead(const std::string& feature_file,
   return ret;
 }
 
-torch::Tensor GatherPReadDirect(const std::string& feature_file,
+template <typename DType>
+torch::Tensor GatherPReadDirectImpl(const std::string& feature_file,
                                 const torch::Tensor& idx, int64_t feature_dim) {
   int feature_fd = open(feature_file.c_str(), O_RDONLY | O_DIRECT);
-  int64_t feature_size = feature_dim * sizeof(float);
+  int64_t feature_size = feature_dim * sizeof(DType);
   int64_t num_idx = idx.numel();
 
-  auto options =
-      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  auto options = torch::TensorOptions()
+                     .dtype(TorchTypeMap<DType>::value)
+                     .device(torch::kCPU);
   torch::Tensor ret = torch::empty({idx.numel(), feature_dim}, options);
 
-  float* read_buffer =
-      (float*)aligned_alloc(ALIGNMENT, ALIGNMENT * 2 * num_idx);
-  float* result_buffer = ret.data_ptr<float>();
+  auto read_buffer = (DType*)aligned_alloc(ALIGNMENT, ALIGNMENT * 2 * num_idx);
+  auto result_buffer = ret.data_ptr<DType>();
   auto idx_data = idx.data_ptr<int64_t>();
 
 #pragma omp parallel for num_threads(64)
@@ -83,13 +85,13 @@ torch::Tensor GatherPReadDirect(const std::string& feature_file,
     int64_t read_size =
         (residual + feature_size > ALIGNMENT) ? ALIGNMENT * 2 : ALIGNMENT;
 
-    if (pread(feature_fd, read_buffer + (ALIGNMENT * 2 * i) / sizeof(float),
+    if (pread(feature_fd, read_buffer + (ALIGNMENT * 2 * i) / sizeof(DType),
               read_size, aligned_offset) == -1) {
       fprintf(stderr, "ERROR: %s\n", strerror(errno));
     }
 
     memcpy(result_buffer + feature_dim * i,
-           read_buffer + (ALIGNMENT * 2 * i + residual) / sizeof(float),
+           read_buffer + (ALIGNMENT * 2 * i + residual) / sizeof(DType),
            feature_size);
   }
 
@@ -97,6 +99,14 @@ torch::Tensor GatherPReadDirect(const std::string& feature_file,
   close(feature_fd);
 
   return ret;
+}
+
+torch::Tensor GatherPReadDirect(const std::string& feature_file,
+                                const torch::Tensor& idx, int64_t feature_dim,
+                                int64_t itemsize) {
+  ITEMSIZE_TO_FLOAT(itemsize, DType, {
+    return GatherPReadDirectImpl<DType>(feature_file, idx, feature_dim);
+  });
 }
 
 torch::Tensor GatherIOUringDirect(const std::string& feature_file,

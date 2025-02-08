@@ -14,7 +14,8 @@ std::vector<torch::Tensor> LoadFeats(const std::string& file_path,
                                      int64_t omp_threads);
 
 torch::Tensor LoadFeats_Direct(const std::string& file_path,
-                               int64_t num_indices, int64_t feature_dim);
+                               int64_t num_indices, int64_t feature_dim,
+                               int64_t item_size);
 
 torch::Tensor LoadFeats_Direct_lseek(const std::string& file_path,
                                      int64_t previously_read_indices,
@@ -36,7 +37,7 @@ void LoadDiskCache_Direct_OMP_iouring(const std::string& file_path,
                                       const torch::Tensor& out_data,
                                       const torch::Tensor& in_idx,
                                       const torch::Tensor& out_idx,
-                                      int64_t feature_dim);
+                                      int64_t feature_dim, int64_t item_size);
 }  // namespace offgs
 
 #endif

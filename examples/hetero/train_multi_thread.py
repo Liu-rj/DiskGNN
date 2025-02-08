@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm, trange
-from offgs.utils import SAGE, GAT, GCN
+from offgs.utils import SAGE, GAT, RGCN
 from offgs.dataset import OffgsDataset
 import threading
 import queue
@@ -19,55 +19,74 @@ import offgs
 
 
 def load_graph(queue, path, batch_id, labels, label_offset):
+    category = "paper"
     for i in batch_id:
         blocks = torch.load(f"{path}/train-{i}.pt")
         output_nodes = torch.load(f"{path}/out-nid-{i}.pt")
-        y = labels[output_nodes - label_offset].long()
+        y = labels[category][output_nodes[category] - label_offset].long()
         queue.put((blocks, y))
 
 
-def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id):
+def load_meta(feat_load_queue, transfer_queue, aux_dir, batch_id, dataset):
     for i in batch_id:
-        (
-            # disk_cold,
-            # disk_rev_cold_idx,
-            disk_loc,
-            disk_rev_hot_idx,
-            rev_cold_idx,
-            mem_loc,
-            rev_hot_idx,
-        ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}.pt")
-        (
-            disk_cold,
-            disk_rev_cold_idx,
-        ) = torch.load(f"{aux_dir}/meta_data/disk-cold-idx-{i}.pt")
-        feat_load_queue.put((disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx))
-        transfer_queue.put((rev_cold_idx, mem_loc, rev_hot_idx))
+        all_feat_load_info, all_transfer_info = {}, {}
+        for node_type in dataset.conf["num_nodes"].keys():
+            (
+                disk_cold,
+                disk_rev_cold_idx,
+                disk_loc,
+                disk_rev_hot_idx,
+                rev_cold_idx,
+                mem_loc,
+                rev_hot_idx,
+            ) = torch.load(f"{aux_dir}/meta_data/train-aux-meta-{i}-{node_type}.pt")
+            all_feat_load_info[node_type] = (
+                disk_cold,
+                disk_rev_cold_idx,
+                disk_loc,
+                disk_rev_hot_idx,
+            )
+            all_transfer_info[node_type] = (rev_cold_idx, mem_loc, rev_hot_idx)
+        feat_load_queue.put(all_feat_load_info)
+        transfer_queue.put(all_transfer_info)
 
 
-def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
+def load_feats(
+    in_queue,
+    out_queue,
+    aux_dir,
+    batch_id,
+    dataset,
+    segment_size,
+    # mmap_features,
+):
     torch.ops.offgs._CAPI_Init_iouring()
     for i in batch_id:
-        disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx = in_queue.get()
-        num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
-        disk_feats = torch.empty(
-            (num_disk, dataset.num_features),
-            dtype=torch.float32,
-            pin_memory=True,
-        )
-
-        if disk_cold.numel() > 0:
-            cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-                f"{aux_dir}/feat/train-aux-{i}.bin",
-                disk_cold.numel(),
-                dataset.num_features,
-                dataset.conf["feat_itemsize"],
+        all_feat_load_info = in_queue.get()
+        all_disk_feats = {}
+        for node_type, info in all_feat_load_info.items():
+            disk_cold, disk_rev_cold_idx, disk_loc, disk_rev_hot_idx = info
+            num_disk = disk_rev_cold_idx.numel() + disk_rev_hot_idx.numel()
+            disk_feats = torch.empty(
+                (num_disk, dataset.num_features),
+                dtype=eval(dataset.conf["features_dtype"]),
+                pin_memory=True,
             )
-            disk_feats[disk_rev_cold_idx] = cold_feats
 
-        if disk_loc.numel() > 0:
+            if disk_cold.numel() > 0:
+                cold_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
+                    f"{aux_dir}/feat/train-aux-{i}-{node_type}.bin",
+                    disk_cold.numel(),
+                    dataset.num_features,
+                    dataset.conf["feat_itemsize"],
+                )
+
+                # mmap_cold_feats = mmap_features[disk_cold]
+
+                disk_feats[disk_rev_cold_idx] = cold_feats
+
             torch.ops.offgs._CAPI_LoadDiskCache_Direct_OMP_iouring(
-                f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}.bin",
+                f"{aux_dir}/disk_cache/disk-cache-{i // segment_size}-{node_type}.bin",
                 disk_feats,
                 disk_loc,
                 disk_rev_hot_idx,
@@ -75,7 +94,9 @@ def load_feats(in_queue, out_queue, aux_dir, batch_id, dataset, segment_size):
                 dataset.conf["feat_itemsize"],
             )
 
-        out_queue.put(disk_feats)
+            all_disk_feats[node_type] = disk_feats
+
+        out_queue.put(all_disk_feats)
     torch.ops.offgs._CAPI_Exit_iouring()
 
 
@@ -88,31 +109,45 @@ def feat_transfer(
     batch_id,
     dataset,
     device,
+    # subg_dir,
+    # mmap_features,
 ):
     for i in batch_id:
-        rev_cold_idx, mem_loc, rev_hot_idx = in_queue.get()
-        disk_feats = disk_feats_queue.get()
-        num_disk = rev_cold_idx.numel()
+        all_transfer_info = in_queue.get()
+        all_disk_feats = disk_feats_queue.get()
+        all_x = {}
+        for node_type, info in all_transfer_info.items():
+            rev_cold_idx, mem_loc, rev_hot_idx = info
+            disk_feats = all_disk_feats[node_type]
+            num_disk = rev_cold_idx.numel()
 
-        num_input = num_disk + mem_loc.numel()
-        x = torch.empty(
-            (num_input, dataset.num_features),
-            dtype=torch.float32,
-            device=device,
-        )
-        if num_disk > 0:
-            x[rev_cold_idx] = disk_feats.to(device)
-        s = torch.cuda.Stream(device)
-        with torch.cuda.stream(s):
-            torch.ops.offgs._CAPI_GatherInGPU(
-                x,
-                rev_hot_idx.to(device),
-                cpu_cached_feats,
-                gpu_cached_feats,
-                mem_loc.to(device),
+            num_input = num_disk + mem_loc.numel()
+            x = torch.empty(
+                (num_input, dataset.num_features),
+                dtype=eval(dataset.conf["features_dtype"]),
+                device=device,
             )
-        s.synchronize()
-        out_queue.put(x)
+            if num_disk > 0:
+                x[rev_cold_idx] = disk_feats.to(device)
+            s = torch.cuda.Stream(device)
+            with torch.cuda.stream(s):
+                torch.ops.offgs._CAPI_GatherInGPU(
+                    x,
+                    rev_hot_idx.to(device),
+                    cpu_cached_feats,
+                    gpu_cached_feats,
+                    mem_loc.to(device),
+                )
+            # s.synchronize()
+            torch.cuda.synchronize()
+
+            # input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+            # idx = input_nodes[node_type][rev_hot_idx]
+            # offset = dataset.conf["node_offsets"][node_type]
+            # x[rev_hot_idx] = mmap_features[idx + offset].to(device)
+
+            all_x[node_type] = x.float()
+        out_queue.put(all_x)
 
 
 def train(
@@ -123,52 +158,38 @@ def train(
     subg_dir: str,
     aux_dir: str,
 ):
+    category = "paper"
     dataset_path = f"{args.dir}/{args.dataset}-offgs"
     device = torch.device(f"cuda:{args.device}")
     fanout = [int(x) for x in args.fanout.split(",")]
     acc_logfile = f"acc/logs/offline_{args.dataset}_{args.fanout}_{args.model}_{args.hidden}_{args.dropout}_{args.ratio}.csv"
     torch.cuda.set_device(device)
 
+    mmap_features = dataset.mmap_features
     if args.debug:
         graph = dataset.graph
-        features = dataset.features.pin_memory()
-    labels = dataset.labels.pin_memory()
+        # features = dataset.features.pin_memory()
+        mmap_features = dataset.mmap_features
+    labels = dataset.labels
     cpu_cached_feats = cpu_cached_feats.pin_memory()
     label_offset = dataset.conf["label_offset"]
 
-    sampler = NeighborSampler(fanout)
-    if args.model == "SAGE":
-        model = SAGE(
-            dataset.num_features,
-            args.hidden,
-            dataset.num_classes,
-            len(fanout),
-            args.dropout,
-        ).to(device)
-    elif args.model == "GAT":
-        model = GAT(
-            dataset.num_features,
-            args.hidden,
-            dataset.num_classes,
-            4,
-            len(fanout),
-            args.dropout,
-        ).to(device)
-    elif args.model == "GCN":
-        model = GCN(
-            dataset.num_features,
-            args.hidden,
-            dataset.num_classes,
-            len(fanout),
-            args.dropout,
-        ).to(device)
+    model = RGCN(
+        dataset.conf["etypes"],
+        dataset.conf["ntypes"],
+        dataset.num_features,
+        dataset.num_classes,
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    train_num = dataset.split_idx["train"].numel()
-    print(f"Label Ratio: {train_num / dataset.num_nodes}, Down Sample: {args.ratio}")
+    train_num = dataset.split_idx["train"][category].numel()
+    size = (train_num + args.batchsize - 1) // args.batchsize
+    total_num_nodes = dataset.conf["total_num_nodes"]
+    print(f"Label Ratio: {train_num / total_num_nodes}, Down Sample: {args.ratio}")
     pool_size = (int(train_num * args.ratio) + args.batchsize - 1) // args.batchsize
 
     if args.debug:
+        sampler = NeighborSampler(fanout)
         val_dataloader = DataLoader(
             graph,
             dataset.split_idx["valid"],
@@ -220,7 +241,7 @@ def train(
         threads.append(
             threading.Thread(
                 target=load_meta,
-                args=(feat_load_queue, transfer_queue, aux_dir, batch_id),
+                args=(feat_load_queue, transfer_queue, aux_dir, batch_id, dataset),
                 daemon=True,
             )
         )
@@ -235,6 +256,7 @@ def train(
                     batch_id,
                     dataset,
                     args.segment_size,
+                    # mmap_features,
                 ),
                 daemon=True,
             )
@@ -252,6 +274,8 @@ def train(
                     batch_id,
                     dataset,
                     device,
+                    # subg_dir,
+                    # mmap_features,
                 ),
                 daemon=True,
             )
@@ -276,23 +300,59 @@ def train(
 
             x = feature_queue.get()
             info_recorder[0] += time.time() - tic  # data load
-            info_recorder[4] += x.numel()
+            for node_type, feat in x.items():
+                info_recorder[4] += feat.numel()
 
             if args.debug:
-                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt").to(device)
-                input_feats = gather_pinned_tensor_rows(features, input_nodes)
-                assert torch.equal(x, input_feats)
-                # x = input_feats
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+                for node_type, nid in input_nodes.items():
+                    offset = dataset.conf["node_offsets"][node_type]
+                    input_feats = mmap_features[nid + offset].to(device).float()
+                    assert torch.equal(x[node_type], input_feats)
+
+            # for key, value in x.items():
+            #     print(key, torch.isnan(value).sum().item(), value.shape)
 
             # tic = time.time()
-            pred = model(blocks, x)
-            loss = F.cross_entropy(pred, y)
-            tot_loss += loss.item()
+            logits = model(blocks, x)[category]
+
+            y_hat = logits.log_softmax(dim=-1)
+            loss = F.nll_loss(y_hat, y)
+
+            if (
+                torch.isnan(logits).sum().item() != 0
+                or torch.isnan(y_hat).sum().item() != 0
+                or torch.isnan(y).sum().item() != 0
+                or torch.isnan(loss).sum().item() != 0
+            ):
+                print(
+                    torch.isnan(logits).sum().item(),
+                    torch.isnan(y_hat).sum().item(),
+                    torch.isnan(y).sum().item(),
+                    torch.isnan(loss).sum().item(),
+                    logits.shape,
+                    i,
+                )
+
+                input_nodes = torch.load(f"{subg_dir}/in-nid-{i}.pt")
+                for node_type, nid in input_nodes.items():
+                    offset = dataset.conf["node_offsets"][node_type]
+                    input_feats = dataset.mmap_features[nid + offset].to(device).float()
+                    print(
+                        node_type,
+                        offset,
+                        torch.isnan(x[node_type]).sum().item(),
+                        torch.isnan(input_feats).sum().item(),
+                        torch.equal(x[node_type], input_feats),
+                    )
+                exit()
+
+            tot_loss += loss.item() * blocks[-1].num_dst_nodes(category)
             opt.zero_grad()
             loss.backward()
             opt.step()
 
-            correct = (pred.argmax(dim=1) == y).sum().item()
+            correct = (y_hat.argmax(dim=1) == y).sum().item()
             total = y.shape[0]
             train_correct += correct
             train_tot += total
@@ -313,8 +373,8 @@ def train(
                 tqdm(val_dataloader, ncols=100)
             ):
                 blocks = [block.to(device) for block in blocks]
-                x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                # x = features[input_nodes.cpu()].to(device)
+                # x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                x = mmap_features[input_nodes.cpu()].to(device)
                 y = gather_pinned_tensor_rows(
                     labels, output_nodes - label_offset
                 ).long()
@@ -333,8 +393,8 @@ def train(
                     tqdm(test_dataloader, ncols=100)
                 ):
                     blocks = [block.to(device) for block in blocks]
-                    x = gather_pinned_tensor_rows(features, input_nodes.to(device))
-                    # x = features[input_nodes.cpu()].to(device)
+                    # x = gather_pinned_tensor_rows(features, input_nodes.to(device))
+                    x = mmap_features[input_nodes.cpu()].to(device)
                     y = gather_pinned_tensor_rows(
                         labels, output_nodes - label_offset
                     ).long()
@@ -351,7 +411,7 @@ def train(
 
             print(
                 f"Epoch: {epoch}\t"
-                f"Loss: {tot_loss:.10f}\t"
+                f"Loss: {tot_loss:.4f}\t"
                 f"Valid acc: {val_acc * 100:.2f}%\t"
                 f"Test acc: {test_acc * 100:.2f}%\t"
             )
@@ -378,6 +438,7 @@ def train(
             f"Epoch Time: {epoch_time:.3f}\t"
             f"Cold Feats Num: {info_recorder[3]}\t"
             f"Input Feature Num: {info_recorder[4]}\t"
+            f"Loss: {tot_loss:.10f}\t"
             f"Train acc: {train_acc * 100:.2f}%"
         )
         for i, info in enumerate(info_recorder):
@@ -436,25 +497,18 @@ def start(args):
     mem = process.memory_info().rss / (1024 * 1024 * 1024)
 
     dataset = OffgsDataset(dataset_dir)
-    cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
-    # cached_feats = torch.load(f"{aux_dir}/cached_feats.pt")
-    cached_feats = torch.ops.offgs._CAPI_LoadFeats_Direct(
-        f"{aux_dir}/cached_feats.bin",
-        cached_nodes.numel(),
-        dataset.num_features,
-        dataset.conf["feat_itemsize"],
-    )
-    cache_rev_idx = torch.load(f"{aux_dir}/cache_rev_idx.pt")
-    correct_cached_feats = torch.empty_like(cached_feats)
-    correct_cached_feats[cache_rev_idx] = cached_feats
+    # cached_nodes = torch.load(f"{aux_dir}/cached_nodes.pt")
+    cached_feats = torch.load(f"{aux_dir}/cached_feats.pt")
 
     (
         cpu_cached_feats,
         gpu_cached_feats,
-    ) = init_cache(args, dataset, correct_cached_feats)
+    ) = init_cache(args, dataset, cached_feats)
+    print("CPU Cache Shape:", cpu_cached_feats.shape, "dtype:", cpu_cached_feats.dtype)
+    print("GPU Cache Shape:", gpu_cached_feats.shape, "dtype:", gpu_cached_feats.dtype)
 
-    args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.num_nodes
-    args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.num_nodes
+    args.cpu_cache_ratio = cpu_cached_feats.shape[0] / dataset.conf["total_num_nodes"]
+    args.gpu_cache_ratio = gpu_cached_feats.shape[0] / dataset.conf["total_num_nodes"]
 
     dc_config = json.load(open(f"{aux_dir}/dc_config.json", "r"))
     args.disk_cache_num = dc_config["disk_cache_num"]
