@@ -157,7 +157,7 @@ def plot_disk_cache(
 
     sorted_keys = sorted(seg_size_dict.keys(), key=lambda x: int(x))
 
-    plt_init(figsize=(10, 4), labelsize=font_size, subplot_flag=True)
+    plt_init(figsize=(10, 3), labelsize=font_size, subplot_flag=True)
 
     plt.subplot(1, 2, 1)
     ax = plt.gca()
@@ -247,7 +247,7 @@ def plot_disk_cache(
         ax.legend(
             loc="upper center",
             fontsize=font_size - 4,
-            bbox_to_anchor=(1.1, 1.15),
+            bbox_to_anchor=(1.1, 1.2),
             ncol=6,
             edgecolor="black",
         )
@@ -324,16 +324,16 @@ plot_disk_cache_motivation_io_decompose(
     "friendster-disk-cache-motivation-io-decompose",
 )
 
-# plot_disk_cache(
-#     "../logs/disk_cache_fs_ig.csv",
-#     "friendster",
-#     4e9,
-#     [50, 100, 150],
-#     "disk-cache",
-#     True,
-#     False,
-#     True,
-# )
+plot_disk_cache(
+    "../logs/disk_cache_fs_ig.csv",
+    "friendster",
+    4e9,
+    [50, 100, 150],
+    "disk-cache",
+    True,
+    False,
+    True,
+)
 # plot_disk_cache(
 #     "../logs/disk_cache_fs_ig.csv",
 #     "igb-full",

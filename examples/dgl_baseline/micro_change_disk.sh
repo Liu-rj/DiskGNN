@@ -14,3 +14,6 @@ sudo env PATH=$PATH python dgl_on_disk.py --dataset friendster --fanout "10,15,2
 
 # IGB-FULL
 sudo env PATH=$PATH python dgl_on_disk.py --dataset igb-full --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --dir $data_path --ratio 0.1 --num-epoch 1
+
+
+python dgl_mmap.py --dataset ogbn-papers100M --fanout "10,15,20" --hidden 256 --dropout 0.2 --model SAGE --dir $data_path --ratio 1.0 --num-epoch 3

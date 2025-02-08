@@ -1,16 +1,13 @@
 import torch
 from dgl.dataloading import DataLoader, NeighborSampler
 import argparse
-import numpy as np
-from tqdm import tqdm, trange
-import matplotlib.pyplot as plt
-from load_graph import *
+import os
 import psutil
 import time
-import json
 from offgs.dataset import OffgsDataset
 import csv
 import dgl.graphbolt as gb
+from tqdm import tqdm
 
 import offgs
 

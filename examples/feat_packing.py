@@ -1,9 +1,7 @@
 import torch
-from dgl.dataloading import DataLoader, NeighborSampler
 import argparse
 import numpy as np
 from tqdm import tqdm, trange
-import matplotlib.pyplot as plt
 import psutil
 import time
 import json

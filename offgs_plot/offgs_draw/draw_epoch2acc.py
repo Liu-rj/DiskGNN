@@ -34,7 +34,7 @@ print("Acc Files:", all_acc_files)
 
 all_acc_files = sorted(all_acc_files)
 
-plt.figure(figsize=(5, 4))
+plt.figure(figsize=(5, 3))
 
 datasets = ["ogbn-papers100M", "mag240m", "igb-full"]
 models = ["SAGE"]
@@ -63,6 +63,8 @@ for dataset in datasets:
                 label = "MariusGNN"
                 marker = "x"
                 color = micro_blue
+                epoch = epoch[1:]
+                accuracy = accuracy[1:]
             else:
                 epoch[6:] = epoch[6:] + 1
                 acc_col = 3 if dataset == "mag240m" else 4
@@ -91,12 +93,16 @@ for dataset in datasets:
         ax.set_ylabel("Accuracy", fontsize=font_size)
         # plt.title("Epoch to Accuracy Curve")
         xticks = np.arange(0, 60, 10)
-        yticks = np.round(np.arange(0.1, 1.2, 0.2), 2)
+        yticks = np.round(np.arange(0.3, 0.8, 0.1), 2)
         ax.set_xticks(xticks, xticks, fontsize=font_size)
         ax.set_xticklabels(xticks, fontsize=font_size)
         ax.set_yticks(yticks, yticks, fontsize=font_size)
         ax.set_yticklabels(yticks, fontsize=font_size)
-        ax.set_ylim(0.1, 0.7)
+        ax.set_ylim(0.3, 0.7)
+        # if dataset == "ogbn-papers100M":
+        #     ax.set_ylim(0.3, 0.7)
+        # else:
+        #     ax.set_ylim(0.3, 0.7)
         ax.grid(axis="y", linestyle="--")
         ax.legend(
             loc="best",

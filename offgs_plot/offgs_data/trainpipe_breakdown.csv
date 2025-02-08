@@ -1,0 +1,9 @@
+system,dataset,graph load,feature load,graph sample,feature assemble,model train,total time
+DiskGNN,papers100M,30.18,88.34,,21.96,27.79,168.27
+MariusGNN,papers100M,20.42,12.97,71.50,108.50,41.039,254.429
+Ginex,papers100M,25.6,435.21,,127.59,23.94,612.34
+DGL-onDisk,papers100M,35.03,5382.33,,76.73,27.75,5521.84
+DiskGNN,mag240M,21.34,27.2,,13.87,22.64,85.05
+MariusGNN,mag240M,15.81,24.63,63.17,63.30,16.15,183.06
+Ginex,mag240M,23.05,327.1,,94.93,21.28,466.36
+DGL-onDisk,mag240M,30.72,4501.27,,62.11,22.4,4616.5

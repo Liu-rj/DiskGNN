@@ -6,7 +6,7 @@ import time
 import argparse
 import numpy as np
 import torch.nn.functional as F
-from offgs.utils import SAGE, GAT
+from offgs.utils import SAGE, GAT, GCN
 from offgs.dataset import OffgsDataset
 import psutil
 import csv
@@ -71,10 +71,9 @@ def train(
     print("label offset:", label_offset)
 
     sampler = NeighborSampler(fanout)
-    input_dim = dataset.num_features
     if args.model == "SAGE":
         model = SAGE(
-            input_dim,
+            dataset.num_features,
             args.hidden,
             dataset.num_classes,
             len(fanout),
@@ -82,13 +81,23 @@ def train(
         ).to(device)
     elif args.model == "GAT":
         model = GAT(
-            input_dim,
+            dataset.num_features,
             args.hidden,
             dataset.num_classes,
             4,
             len(fanout),
             args.dropout,
         ).to(device)
+    elif args.model == "GCN":
+        model = GCN(
+            dataset.num_features,
+            args.hidden,
+            dataset.num_classes,
+            len(fanout),
+            args.dropout,
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported model: {args.model}")
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_nid = (

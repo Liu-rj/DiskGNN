@@ -40,6 +40,7 @@ features = dataset.mmap_features
 
 node_counts = torch.load(f"{output_dir}/node_counts.pt").cpu()
 sorted_idx = torch.load(f"{output_dir}/meta_node_popularity.pt").cpu()
+sorted_counts = node_counts[sorted_idx]
 
 feat_load_time, nid_load_time, difference_time, save_time = 0, 0, 0, 0
 
@@ -53,35 +54,25 @@ train_idx = (
 print(f"Train Node Ratio: {train_idx.numel() / dataset.num_nodes}")
 num_batches = (train_idx.numel() + args.batchsize - 1) // args.batchsize
 
-all_input_nodes = [
-    torch.load(f"{output_dir}/in-nid-{bid}.pt") for bid in range(num_batches)
-]
-
-pack_nodes_num = []
+blowup_ratio_list = []
 for cache_size in tqdm(feat_cache_sizes, ncols=100):
     num_entries = min(
         int(cache_size) // (4 * features.shape[1]),
         dataset.num_nodes,
     )
-    cache_indices = sorted_idx[:num_entries]
-    key, value = torch.ops.offgs._CAPI_BuildHashMap(cache_indices.to(device))
+    pack_num = sorted_counts[num_entries:].sum().item()
+    blowup_ratio = pack_num / dataset.num_nodes
+    blowup_ratio_list.append(blowup_ratio)
     tqdm.write(
         f"#Cached Entries: {num_entries} / {dataset.num_nodes}"
         f"Ratio: {num_entries / dataset.num_nodes}"
-        f"Access Cache Ratio: {node_counts[cache_indices].sum().item() / node_counts.sum().item()}"
+        f"Access Cache Ratio: {sorted_counts[:num_entries].sum().item() / sorted_counts.sum().item()}"
+        f"Blowup Ratio: {pack_num / dataset.num_nodes}"
     )
-
-    total_pack_nodes = 0
-    for input_nodes in all_input_nodes:
-        packed_nodes = torch.ops.offgs._CAPI_QueryHashMap(
-            input_nodes.to(device), key, value
-        )[0]
-        total_pack_nodes += packed_nodes.numel()
-    pack_nodes_num.append(total_pack_nodes / dataset.num_nodes)
 
 f = open("cachemem_blowup_fs_ig.csv", "a")
 writer = csv.writer(f, lineterminator="\n")
 log_info = [args.dataset, args.fanout, args.batchsize]
-log_info += [f"{x:.3f}" for x in pack_nodes_num]
+log_info += [f"{x:.3f}" for x in blowup_ratio_list]
 writer.writerow(log_info)
 f.close()

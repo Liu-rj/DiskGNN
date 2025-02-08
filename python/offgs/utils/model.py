@@ -26,23 +26,22 @@ def normalized_laplacian_edata(g, weight=None):
 
 
 class GCN(nn.Module):
-    def __init__(self, in_feats, n_hidden, n_classes, n_layers):
+    def __init__(self, in_feats, n_hidden, n_classes, n_layers, dropout):
         super().__init__()
-        self.n_hidden = n_hidden
-        self.n_classes = n_classes
-
-        self.convs = nn.ModuleList()
-        self.convs.append(GraphConv(in_feats, n_hidden))
+        self.layers = nn.ModuleList()
+        self.layers.append(GraphConv(in_feats, n_hidden))
         for i in range(n_layers - 2):
-            self.convs.append(GraphConv(n_hidden, n_hidden))
-        self.convs.append(GraphConv(n_hidden, n_classes))
+            self.layers.append(GraphConv(n_hidden, n_hidden))
+        self.layers.append(GraphConv(n_hidden, n_classes))
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, blocks, x):
-        for i, (conv, block) in enumerate(zip(self.convs, blocks)):
-            x = conv(block, x, edge_weight=block.edata["w"])
-            if i != len(self.convs) - 1:
-                x = F.relu(x)
-        return x
+    def forward(self, blocks, h):
+        for i, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h = layer(block, h)
+            if i != len(self.layers) - 1:
+                h = F.relu(h)
+                h = self.dropout(h)
+        return h
 
 
 class SAGE(nn.Module):
@@ -58,6 +57,25 @@ class SAGE(nn.Module):
     def forward(self, blocks, h):
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             h = layer(block, h)
+            if l != len(self.layers) - 1:
+                h = F.relu(h)
+                h = self.dropout(h)
+        return h
+
+
+class SAGE_Shadow(nn.Module):
+    def __init__(self, in_size, hid_size, out_size, num_layers, dropout):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(SAGEConv(in_size, hid_size, "mean"))
+        for i in range(num_layers - 2):
+            self.layers.append(SAGEConv(hid_size, hid_size, "mean"))
+        self.layers.append(SAGEConv(hid_size, out_size, "mean"))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, subg, h):
+        for l, layer in enumerate(self.layers):
+            h = layer(subg, h)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
                 h = self.dropout(h)

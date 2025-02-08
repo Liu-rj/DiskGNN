@@ -1,15 +1,11 @@
 import torch
-from dgl.dataloading import DataLoader, NeighborSampler
-from dgl.utils import gather_pinned_tensor_rows
 import time
 import argparse
 import numpy as np
 import torch.nn.functional as F
-from tqdm import tqdm, trange
-from offgs.utils import SAGE, GAT
+from tqdm import tqdm
+from offgs.utils import SAGE, GAT, GCN
 from offgs.dataset import OffgsDataset
-import threading
-import queue
 import psutil
 import csv
 import json
@@ -39,7 +35,6 @@ def train(
     cpu_cached_feats = cpu_cached_feats.pin_memory()
     label_offset = dataset.conf["label_offset"]
 
-    sampler = NeighborSampler(fanout)
     if args.model == "SAGE":
         model = SAGE(
             dataset.num_features,
@@ -57,6 +52,16 @@ def train(
             len(fanout),
             args.dropout,
         ).to(device)
+    elif args.model == "GCN":
+        model = GCN(
+            dataset.num_features,
+            args.hidden,
+            dataset.num_classes,
+            len(fanout),
+            args.dropout,
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported model: {args.model}")
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     train_num = dataset.split_idx["train"].numel()

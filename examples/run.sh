@@ -30,7 +30,7 @@ sudo env PATH=$PATH python train_multi_thread.py --dataset mag240m --fanout "10,
 
 # Friendster
 python prepare_dataset.py --dataset=friendster
-sudo env PATH=$PATH python sampling.py --dataset friendster --fanout "10,15,20" --store-path $data_path --ratio 0.1 --device 1
+sudo env PATH=$PATH python sampling.py --dataset friendster --fanout "10,15,20" --store-path $data_path --ratio 1.0 --device 1
 sudo env PATH=$PATH python feat_packing.py --dataset friendster --fanout "10,15,20" --feat-cache-size 4e9 --store-path $data_path --ratio 1.0 --blowup -1
 # speed
 sudo env PATH=$PATH python train_multi_thread.py --dataset friendster --fanout "10,15,20" --hidden 256 --dropout 0 --model SAGE --gpu-cache-size 2e9 --cpu-cache-size 2e9 --dir $data_path --ratio 1.0 --blowup -1
